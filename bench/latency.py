@@ -92,22 +92,43 @@ def summarise(name: str, samples: list[dict]) -> dict:
     }
 
 
-def run_path(conn, graph, n: int, image: str | None, messages: list[str]) -> list[dict]:
+def run_path(
+    conn, graph, n: int, image: str | None, messages: list[str], delay: float = 0.0
+) -> tuple[list[dict], int]:
+    """Returns (samples, throttled_count).
+
+    `delay` exists because the free tier's limit is tokens per minute and this
+    agent spends ~1.1k tokens a turn. Firing 30 turns back to back measures the
+    rate limiter, not the agent. Pacing measures the thing we actually want to
+    report -- and the throttled count is reported alongside, because how often
+    a free tier throttles is itself a real number a reader should see.
+    """
     samples: list[dict] = []
+    throttled = 0
     for i in range(n):
         message = messages[i % len(messages)]
+        if delay and i:
+            time.sleep(delay)
         started = time.perf_counter()
         try:
             result = run_turn(conn, USER, message, image_path=image, graph=graph)
         except Exception as exc:  # noqa: BLE001
-            print(f"  [{i + 1}/{n}] failed: {type(exc).__name__}: {str(exc)[:90]}")
+            throttled += 1
+            print("x", end="", flush=True)
+            if throttled == 1:
+                print(f"\n  first failure: {type(exc).__name__}: {str(exc)[:80]}")
+            continue
+        # A degraded reply is a throttled turn wearing a smile; it must not be
+        # counted as a fast success and quietly improve the percentiles.
+        if "rate limited" in result.get("reply", "").lower():
+            throttled += 1
+            print("x", end="", flush=True)
             continue
         result["elapsed"] = time.perf_counter() - started
         samples.append(result)
-        marker = "F" if result.get("used_fast_path") else "."
-        print(marker, end="", flush=True)
+        print("F" if result.get("used_fast_path") else ".", end="", flush=True)
     print()
-    return samples
+    return samples, throttled
 
 
 def main() -> int:
@@ -119,6 +140,8 @@ def main() -> int:
     parser.add_argument("--no-fast-path", action="store_true")
     parser.add_argument("--out", default="bench/results/latest.json")
     parser.add_argument("--skip-image", action="store_true")
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="seconds between turns; free tiers cap tokens per minute")
     args = parser.parse_args()
 
     if args.backend:
@@ -151,9 +174,12 @@ def main() -> int:
     print(f"warmup (first call, includes connection setup): {warmup_ms:.0f} ms\n")
 
     print("text path")
-    text_samples = run_path(conn, graph, args.n, None, TEXT_MESSAGES)
+    text_samples, text_throttled = run_path(
+        conn, graph, args.n, None, TEXT_MESSAGES, delay=args.delay
+    )
 
     image_samples: list[dict] = []
+    image_throttled = 0
     image_path = ROOT / args.image
     if args.skip_image:
         print("\nimage path skipped")
@@ -162,8 +188,8 @@ def main() -> int:
     else:
         print("\nimage path")
         n_image = max(1, args.n // 3)
-        image_samples = run_path(
-            conn, graph, n_image, str(image_path), IMAGE_CAPTIONS
+        image_samples, image_throttled = run_path(
+            conn, graph, n_image, str(image_path), IMAGE_CAPTIONS, delay=args.delay
         )
 
     report = {
@@ -171,6 +197,8 @@ def main() -> int:
         "fast_path": os.environ.get("CALORAI_FAST_PATH", "1"),
         "warmup_ms": round(warmup_ms, 1),
         "mock": is_mock,
+        "delay_s": args.delay,
+        "throttled": {"text": text_throttled, "image": image_throttled},
         "paths": [summarise("text", text_samples)],
     }
     if image_samples:
@@ -194,6 +222,13 @@ def main() -> int:
             print(f"{path['path']:7} stage p50: {stages}")
     if text_samples:
         print(f"\nfast path handled {report['paths'][0]['fast_path_share']:.0%} of text turns")
+    if text_throttled or image_throttled:
+        total = args.n + (len(image_samples) + image_throttled)
+        print(
+            f"throttled: text {text_throttled}, image {image_throttled} "
+            f"of {total} attempts -- free-tier tokens-per-minute limit, "
+            f"not agent latency"
+        )
 
     out = ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
