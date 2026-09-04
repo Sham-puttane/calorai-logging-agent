@@ -22,6 +22,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Windows terminals default to cp1252, and a model that emits an emoji or a
+# non-Latin character then kills the process with UnicodeEncodeError mid-reply.
+# Observed live: a model answered with a seedling emoji and the CLI crashed.
+# The prompt asks for no emoji, but a prompt is not a guarantee, and losing a
+# session over a decorative character is absurd.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError):  # already wrapped, or not a real tty
+        pass
+
+
 from rich.console import Console  # noqa: E402
 from rich.panel import Panel  # noqa: E402
 from rich.rule import Rule  # noqa: E402

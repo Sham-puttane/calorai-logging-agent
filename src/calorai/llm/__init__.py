@@ -128,7 +128,7 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=os.environ.get("MISTRAL_TEXT_MODEL", "open-mistral-7b"),
+            model=os.environ.get("MISTRAL_TEXT_MODEL", "ministral-8b-latest"),
             api_key=_require("MISTRAL_API_KEY", "mistral"),
             base_url=MISTRAL_BASE_URL,
             temperature=0.3,
@@ -234,7 +234,7 @@ def active_backends() -> dict[str, str]:
         "groq": os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-20b"),
         "cerebras": os.environ.get("CEREBRAS_TEXT_MODEL", "llama-3.3-70b"),
         "gemini": os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash-lite"),
-        "mistral": os.environ.get("MISTRAL_TEXT_MODEL", "open-mistral-7b"),
+        "mistral": os.environ.get("MISTRAL_TEXT_MODEL", "ministral-8b-latest"),
         "mistral-vision": os.environ.get("MISTRAL_VISION_MODEL", "pixtral-12b-2409"),
         "openrouter": os.environ.get("OPENROUTER_MODEL", "?"),
         "ollama": os.environ.get("OLLAMA_TEXT_MODEL", "qwen2.5:3b"),
