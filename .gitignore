@@ -7,3 +7,7 @@ __pycache__/
 .pytest_cache/
 bench/results/
 .DS_Store
+*.egg-info/
+build/
+dist/
+demo.db
