@@ -18,6 +18,10 @@ calorai › logged rice, dal and paneer at half portions, ~241 cal —
           rough guess on the amounts from the photo.
 ```
 
+> **[Visual walkthrough board](https://claude.ai/code/artifact/3be0699f-b1bf-4ea4-9ef4-a67624675aea)**
+> — one page with the graph, the four decisions that carry it, every model choice with its measured
+> number, and the bugs only real models found.
+
 ---
 
 ## Setup
@@ -39,7 +43,7 @@ is still there and still accurate if you prefer it — you'll just need `PYTHONP
 backend. To verify the clone before configuring anything:
 
 ```bash
-pytest tests/ -q                 # 146 tests
+pytest tests/ -q                 # 163 tests
 python evals/run_evals.py        # 21 cases, 77 assertions
 ```
 
@@ -139,10 +143,14 @@ three picks. Full write-up in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 | Path | Model | Warm | Why |
 |---|---|---|---|
-| **Text / agent loop** | Groq `openai/gpt-oss-20b` | **230 ms** | The loop is tool calling, so function-calling reliability and throughput are the axes that matter. ~1000 tok/s. |
+| **Text / agent loop** | Groq `openai/gpt-oss-20b` | **230 ms** | The loop is tool calling, so function-calling reliability and throughput are the axes that matter. |
 | **Vision** | Mistral `pixtral-12b-2409` | **~5.7 s** | A genuinely different model *and* provider, with a quota you can actually use. |
-| **Vision failover** | Gemini `gemini-2.5-flash-lite` | ~5.0 s | Comparable output; kept as backup so the two providers cover each other. |
-| **Text failover** | Gemini `gemini-2.5-flash-lite` | — | A different provider, so a Groq rate limit costs a model swap rather than a wait. |
+| **Text failover** | Mistral `ministral-8b-latest` | ~957 ms | A different provider, so a rate limit costs a model swap rather than a wait. |
+| **Also verified** | OpenRouter `ling-3.0-flash-fin:free` | **793 ms** | Correct tool calls on a free tier; what the demo runs on once Groq's daily budget is spent. |
+
+> Groq's free tier is **200,000 tokens per day**, and this agent spends ~1.1k per call — so a long
+> working session exhausts it. That is why the backend is an env var and why three providers are
+> wired and verified rather than one.
 
 ### The vision pick was a head-to-head, not an assertion
 
@@ -488,7 +496,7 @@ rejection is worth more than an assumed one.
 ## Testing and evals
 
 ```bash
-pytest tests/ -q                             # 146 tests
+pytest tests/ -q                             # 163 tests
 python evals/run_evals.py                    # 21 cases, 77 assertions
 python evals/run_evals.py --no-fast-path     # same, with the short-circuit off
 python evals/run_evals.py --backend groq     # score a real model
