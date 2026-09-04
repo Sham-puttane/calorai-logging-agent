@@ -40,6 +40,17 @@ _NOISE = {
 }
 
 
+# Units that carry no information. A model asked for a unit will often say
+# "serving" rather than commit, and "2 serving paratha" reads worse than
+# "2 piece paratha" for the same number of calories -- so when the caller is
+# vague the table's own unit wins.
+_GENERIC_UNITS = {"", "serving", "servings", "portion", "portions", "unit", "units"}
+
+
+def _best_unit(given: str | None, canonical: str) -> str:
+    return canonical if (given or "").strip().lower() in _GENERIC_UNITS else given
+
+
 @dataclass(frozen=True)
 class Resolved:
     """A FoodItem with nutrition attached. `nutrition` is the TOTAL for `qty`,
@@ -182,14 +193,14 @@ def resolve(
     hit = _cache_get(conn, key)
     if hit:
         return Resolved(
-            name=hit["name"], qty=item.qty, unit=item.unit or hit["unit"],
+            name=hit["name"], qty=item.qty, unit=_best_unit(item.unit, hit["unit"]),
             nutrition=hit["nutrition"].scaled(item.qty), source="cache", confidence=0.9,
         )
 
     seed = _seed_lookup(item.name)
     if seed:
         return Resolved(
-            name=seed["name"], qty=item.qty, unit=item.unit or seed["unit"],
+            name=seed["name"], qty=item.qty, unit=_best_unit(item.unit, seed["unit"]),
             nutrition=seed["nutrition"].scaled(item.qty), source="seed", confidence=1.0,
         )
 
@@ -197,7 +208,7 @@ def resolve(
     if fuzzy:
         record, score = fuzzy
         return Resolved(
-            name=record["name"], qty=item.qty, unit=item.unit or record["unit"],
+            name=record["name"], qty=item.qty, unit=_best_unit(item.unit, record["unit"]),
             nutrition=record["nutrition"].scaled(item.qty), source="fuzzy", confidence=score,
         )
 

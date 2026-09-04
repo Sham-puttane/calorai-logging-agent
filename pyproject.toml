@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pyflakes>=3.0"]
+ui = ["streamlit>=1.40"]
 
 [project.scripts]
 calorai = "calorai.cli:main"

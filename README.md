@@ -71,13 +71,23 @@ and the graph never learns which vendor answered.
 ### Try it
 
 ```bash
-python -m calorai.cli                       # chat
+python -m calorai.cli                       # chat in the terminal
 python -m calorai.cli --user priya          # a different user; sessions are isolated
 python -m calorai.cli --no-fast-path        # force every turn through the agent loop
+
+python -m calorai.demo                      # self-playing walkthrough, for recording
+streamlit run app.py                        # chat UI  (pip install -e ".[ui]")
 ```
 
-In the chat: `img:images/plate.jpg optional caption` sends a photo. `/totals`, `/memory`,
+In the CLI: `img:images/plate.jpg optional caption` sends a photo. `/totals`, `/memory`,
 `/history`, `/debug` (per-stage timings for the last turn), `/help`, `/quit`.
+
+[`app.py`](app.py) is a deliberately thin Streamlit UI — the brief says the agent code is what
+gets read, so it holds no logic of its own and calls the same `stream_turn` the CLI does. It earns
+its place with the sidebar: the day's totals and the item table sit beside the conversation and
+update after every turn, which makes *"totals stay correct through a correction"* something you can
+watch — send `2 rotis with dal` then `actually that was 3 rotis not 2` and the roti row goes 2 → 3
+while the total moves by exactly 105 cal, with no second row appearing.
 
 ---
 

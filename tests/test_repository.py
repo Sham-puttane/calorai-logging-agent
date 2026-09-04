@@ -261,3 +261,19 @@ def test_scaling_leaves_other_meals_alone(conn):
 
     totals = repo.daily_totals(conn, USER)
     assert totals["kcal"] == 210 + 100, "only the most recent meal is resized"
+
+
+def test_a_vague_unit_falls_back_to_the_tables_own(conn):
+    """Models say "serving" rather than commit. "2 serving paratha" reads worse
+    than "2 piece paratha" for identical calories, so the table's unit wins
+    when the caller is vague -- and is left alone when it is not."""
+    repo.log_meal(conn, USER, [
+        FoodItem(name="paratha", qty=2, unit="serving"),
+        FoodItem(name="rice", qty=1, unit="katori"),
+    ])
+    rows = {r["name"]: r["unit"] for r in conn.execute(
+        "SELECT name, unit FROM meal_items WHERE user_id=?", (USER,)
+    )}
+    assert rows["paratha"] == "piece", "vague unit replaced by the canonical one"
+    assert rows["rice"] == "katori", "a specific unit is respected"
+    assert repo.daily_totals(conn, USER)["kcal"] == 540
