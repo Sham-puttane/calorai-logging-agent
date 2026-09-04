@@ -494,12 +494,17 @@ def stream_turn(
         if mode == "values":
             final = payload
             continue
-        chunk = payload[0] if isinstance(payload, tuple) else payload
+        chunk, meta = payload if isinstance(payload, tuple) else (payload, {})
 
-        # Only the assistant's own words. "messages" mode also streams
-        # ToolMessages, whose content is the raw JSON a tool returned -- without
-        # this filter a log_meal result gets dumped on screen ahead of the
-        # sentence the user is meant to read.
+        # Stream ONLY the agent node's own words. "messages" mode is
+        # indiscriminate: it also carries ToolMessages, whose content is the raw
+        # JSON a tool returned, and the vision model's structured output, which
+        # is a wall of PlateAnalysis JSON. Both were observed dumped on screen
+        # ahead of the sentence the user is meant to read. Filtering by node is
+        # what makes this precise -- filtering by message type alone let the
+        # vision JSON through, because it arrives as assistant content too.
+        if (meta or {}).get("langgraph_node") != "agent":
+            continue
         if isinstance(chunk, ToolMessage) or not isinstance(chunk, (AIMessage, AIMessageChunk)):
             continue
 

@@ -402,3 +402,20 @@ def test_streaming_reports_time_to_first_token(conn):
     graph = build_graph(conn, USER, streaming=True)
     result = [p for kind, p in stream_turn(conn, USER, "had 2 rotis", graph=graph) if kind == "done"][0]
     assert result["ttft"] is not None and result["ttft"] >= 0
+
+
+def test_streaming_never_leaks_vision_json(conn):
+    """The vision model's structured output arrives as assistant content, so a
+    type-only filter let a wall of PlateAnalysis JSON onto the screen. Streaming
+    is filtered by graph node instead."""
+    from calorai.graph import stream_turn
+
+    graph = build_graph(conn, USER, streaming=True)
+    tokens = [
+        p for kind, p in stream_turn(conn, USER, "", image_path="images/plate.jpg", graph=graph)
+        if kind == "token"
+    ]
+    streamed = "".join(tokens)
+
+    for leak in ("id_confidence", "portion_confidence", "scale_reference", '"alternatives"'):
+        assert leak not in streamed, f"vision JSON leaked into the reply: {leak}"
