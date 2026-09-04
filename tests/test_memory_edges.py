@@ -309,3 +309,53 @@ def test_a_slot_named_in_the_message_beats_the_one_inferred(conn):
 
     resolved = store.resolve_alias(conn, USER, "my usual", slot="breakfast")
     assert {i["name"] for i in resolved["items"]} == {"oats"}
+
+
+# ===========================================================================
+# what is already on the board today
+# ===========================================================================
+def test_the_agent_can_see_what_it_already_logged(conn):
+    """Without this the agent has no idea what is in its own database, and
+    answered "i skipped lunch, breakfast was filling" with "what did you have
+    for breakfast?" -- about a meal it had logged four messages earlier."""
+    from calorai.memory import render
+
+    repo.log_meal(conn, USER, items([("omelette", 1, "serving"), ("coffee", 1, "cup")]), slot="breakfast")
+    block = render.render_today(conn, USER)
+
+    assert "omelette" in block and "coffee" in block
+    assert "250" in block
+
+
+def test_an_empty_day_adds_nothing_to_the_prompt(conn):
+    from calorai.memory import render
+
+    assert render.render_today(conn, USER) == ""
+
+
+def test_the_day_view_is_capped(conn):
+    """A long day must not grow the prompt without limit."""
+    from calorai.memory import render
+
+    for _ in range(render.MAX_TODAY_ITEMS + 6):
+        repo.log_meal(conn, USER, items([("biscuit", 1, "piece")]), slot="snack")
+
+    block = render.render_today(conn, USER)
+    assert block.count("biscuit") <= render.MAX_TODAY_ITEMS, "must not grow unbounded"
+    assert "..." in block, "and must show it was truncated"
+
+
+def test_the_day_view_is_per_user(conn):
+    from calorai.memory import render
+
+    repo.log_meal(conn, "someone_else", items([("biryani", 2, "katori")]))
+    assert render.render_today(conn, USER) == ""
+
+
+def test_the_day_view_points_at_the_tool_for_numbers(conn):
+    """It carries food for recognition, not arithmetic -- the label has to say
+    so, or the model will start answering totals from context."""
+    from calorai.memory import render
+
+    repo.log_meal(conn, USER, items([("roti", 2, "piece")]))
+    assert "get_daily_totals" in render.render_today(conn, USER)

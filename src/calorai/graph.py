@@ -85,6 +85,11 @@ kcal number. Do not carry food or numbers over from earlier in the conversation.
 Vague amounts are not a reason to ask: "grazed all afternoon" -> log 1 serving \
 of "assorted snacks" and call it a rough guess.
 
+"i skipped lunch", "no dinner tonight", "wasn't hungry" with NO food named is \
+nothing to log. Call no tool and reply like a person -- "fair enough" -- then \
+stop. And never ask what they ate at a meal that already appears in [already \
+logged today]: that is asking them to repeat something you wrote down yourself.
+
 Fractions are amounts of one item, not counts: "two thirds of the box" is \
 qty 0.67, "half" 0.5, "a couple" 2.
 
@@ -139,6 +144,7 @@ class AgentState(TypedDict, total=False):
     caption: str | None
     plate_analysis: dict[str, Any] | None
     memory_block: str
+    today_block: str
     alias_expansion: str | None
     pending_expansion: str | None
     awaiting_confirmation: bool
@@ -283,8 +289,10 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
             )
             expansion = f'("{alias["phrase"]}" for this person means: {items})'
 
-        # 2. everything memory knows, rendered small
+        # 2. everything memory knows, rendered small -- plus what is already on
+        #    the board today, so the agent stops asking about its own data
         memory_block = render.render_memory_block(conn, uid)
+        today_block = render.render_today(conn, uid)
 
         # 3. a photo waiting on a yes from the previous turn
         pending_expansion = None
@@ -311,6 +319,7 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
 
         return {
             "memory_block": memory_block,
+            "today_block": today_block,
             "alias_expansion": expansion,
             "pending_expansion": pending_expansion,
             "short_circuit": short,
@@ -336,6 +345,8 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
 
         if state.get("memory_block"):
             preamble.append(SystemMessage(content=state["memory_block"]))
+        if state.get("today_block"):
+            preamble.append(SystemMessage(content=state["today_block"]))
         if state.get("alias_expansion"):
             preamble.append(SystemMessage(content=state["alias_expansion"]))
         if state.get("pending_expansion"):

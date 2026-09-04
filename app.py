@@ -90,7 +90,12 @@ def main() -> None:
         st.subheader("what it remembers")
         block = render.render_memory_block(conn, user)
         if block:
-            st.code(block, language=None)
+            # "[what I know about you]" is a prompt header, not a UI label --
+            # the panel already says "what it remembers" above it.
+            body = "\n".join(
+                line for line in block.splitlines() if not line.startswith("[")
+            ).strip()
+            st.code(body, language=None)
         else:
             # Empty here is correct, not broken: meals are events, not facts
             # about a person, so logging food deliberately writes nothing.

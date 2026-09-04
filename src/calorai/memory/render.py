@@ -64,6 +64,42 @@ def render_memory_block(conn: sqlite3.Connection, user_id: str) -> str:
     return f"[what I know about you]\n{body}"
 
 
+#: Cap on the day-so-far line. Enough for a normal day; a very long one is
+#: truncated rather than allowed to grow the prompt without limit.
+MAX_TODAY_ITEMS = 12
+
+
+def render_today(conn: sqlite3.Connection, user_id: str) -> str:
+    """A one-line view of what is already logged today.
+
+    Costs ~25 tokens and removes a whole class of stupid turns. Without it the
+    agent has no idea what is in its own database unless it spends a tool call
+    finding out, so "i skipped lunch, breakfast was filling" was answered with
+    "what did you have for breakfast?" -- about a meal it had logged four
+    messages earlier. Asking someone to repeat something you already wrote down
+    is the exact opposite of texting a friend.
+
+    Deliberately no macros and rounded calories: this is for *recognition*, not
+    arithmetic. The numbers still come from get_daily_totals, and the label
+    says so.
+    """
+    from ..repository import daily_totals, find_meals
+
+    meals = find_meals(conn, user_id, day="today", limit=MAX_TODAY_ITEMS + 1)["meals"]
+    if not meals:
+        return ""
+
+    shown = list(reversed(meals))[:MAX_TODAY_ITEMS]
+    parts = [f"{m['qty']:g} {m['unit']} {m['name']}" for m in shown]
+    if len(meals) > MAX_TODAY_ITEMS:
+        parts.append("...")
+    total = daily_totals(conn, user_id)["kcal"]
+    return (
+        f"[already logged today, for context -- get numbers from get_daily_totals]\n"
+        f"{', '.join(parts)} ({total} cal)"
+    )
+
+
 def render_vision_priors(conn: sqlite3.Connection, user_id: str) -> str:
     """A narrower slice, for the vision prompt.
 
