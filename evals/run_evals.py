@@ -158,7 +158,10 @@ def run(cases: list[Case], verbose: bool = False) -> int:
         total_checks += len(checks)
 
         mark = f"{GREEN}PASS{RESET}" if ok else f"{RED}FAIL{RESET}"
-        print(f"{mark}  {case.id}")
+        # Cases drawn straight from the brief's test conversation set are
+        # flagged, so a run shows coverage of it rather than just a score.
+        tag = f"  {DIM}<- {case.note}{RESET}" if case.note.startswith("brief:") else ""
+        print(f"{mark}  {case.id}{tag}")
         if not ok:
             failed_cases.append(case.id)
         for label, passed, detail in checks:
@@ -176,6 +179,10 @@ def run(cases: list[Case], verbose: bool = False) -> int:
         f"{colour}{len(cases) - len(failed_cases)}/{len(cases)} cases · "
         f"{passed_checks}/{total_checks} assertions ({score:.0f}%){RESET}"
     )
+    from_brief = sum(1 for c in cases if c.note.startswith("brief:"))
+    if from_brief:
+        print(f"{DIM}{from_brief} of these come straight from the brief's test "
+              f"conversation set{RESET}")
     if failed_cases:
         print(f"{RED}failed: {', '.join(failed_cases)}{RESET}")
     return 0 if not failed_cases else 1
