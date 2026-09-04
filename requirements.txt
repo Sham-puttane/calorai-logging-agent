@@ -1,0 +1,16 @@
+# --- agent framework ---
+langgraph>=0.2.28
+langchain-core>=0.3.15
+
+# --- model providers (all have no-credit-card free tiers) ---
+langchain-groq>=0.2.0            # text / agent loop
+langchain-google-genai>=2.0.0    # vision
+langchain-openai>=0.2.0          # Cerebras (OpenAI-compatible endpoint)
+langchain-ollama>=0.2.0          # optional zero-key local backend
+
+# --- everything else ---
+pydantic>=2.5
+python-dotenv>=1.0
+PyYAML>=6.0
+rich>=13.0
+pytest>=8.0
