@@ -96,12 +96,20 @@ applied afterwards.
 _NO_CAPTION_RULE = ""
 
 
-#: Longest edge sent to the vision model. Phone photos are 3-12MP, and uploading
-#: one is most of the image path's latency -- a 2.3MB plate measured ~11s
-#: end to end, most of it transfer. Vision models tile images internally at a
-#: few hundred pixels anyway, so past roughly this size you are paying to send
-#: detail the model discards. Identifying dal in a bowl does not need 12MP.
-MAX_EDGE_PX = 768
+#: Longest edge sent to the vision model. Phone photos are 3-12MP and vision
+#: models tile internally at a few hundred pixels, so past this you pay to send
+#: detail the model discards.
+#:
+#: 512 rather than 768, A/B'd on the same plate with four calls each:
+#: median 4601 ms against 6549 ms, a 30% cut, and no worse an answer -- at 768
+#: it reported a glass of water that was not in the frame.
+#:
+#: 384 was tried and is worse on both counts: nine items including two different
+#: breads for the same bread, and *slower*. That is the tell that latency here
+#: tracks the number of output tokens rather than the size of the image -- a
+#: blurrier picture makes the model less sure, and an unsure model writes more
+#: JSON. Which is why shrinking further is not a free win.
+MAX_EDGE_PX = 512
 JPEG_QUALITY = 85
 
 
@@ -131,7 +139,7 @@ def _downscale(file_path: Path) -> bytes | None:
         return None
     try:
         with Image.open(file_path) as img:
-            if max(img.size) <= MAX_EDGE_PX and file_path.stat().st_size < 400_000:
+            if max(img.size) <= MAX_EDGE_PX and file_path.stat().st_size < 150_000:
                 return None
             img = img.convert("RGB")
             img.thumbnail((MAX_EDGE_PX, MAX_EDGE_PX), Image.LANCZOS)

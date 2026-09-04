@@ -488,3 +488,20 @@ def get_pending(conn: sqlite3.Connection, user_id: str) -> dict[str, Any] | None
 def clear_pending(conn: sqlite3.Connection, user_id: str) -> None:
     conn.execute("DELETE FROM pending_meals WHERE user_id = ?", (user_id,))
     conn.commit()
+
+
+def clear_day(conn: sqlite3.Connection, user_id: str, day: str | None = None) -> int:
+    """Soft-delete everything a user logged on one day.
+
+    Exists so the UI does not write SQL. Persistence lives behind this module;
+    a raw `datetime('now')` in a Streamlit callback is both a layering leak and
+    a dialect lock-in, since that function is SQLite's spelling and Postgres
+    spells it differently.
+    """
+    cur = conn.execute(
+        "UPDATE meal_items SET deleted_at = ?"
+        " WHERE user_id = ? AND local_date = ? AND deleted_at IS NULL",
+        (utcnow(), user_id, parse_day(day)),
+    )
+    conn.commit()
+    return cur.rowcount

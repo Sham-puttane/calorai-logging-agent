@@ -386,14 +386,14 @@ vision. Reproduce with `python bench/latency.py --n 20 --delay 8`; the raw repor
 | path | n | **p50** | **p95** | mean | max | throttled |
 |---|---|---|---|---|---|---|
 | **text** | 20 | **766 ms** | **1257 ms** | 661 ms | 1289 ms | 0 / 20 |
-| **image** | 7 | **6896 ms** | **11259 ms** | 7779 ms | 12530 ms | 3 / 10 |
+| **image** | 8 | **6061 ms** | **13709 ms** | 7396 ms | 15583 ms | 0 / 8 |
 
 Cold start (first call, includes client construction and TLS): **924 ms**.
 
 | path | stage p50 |
 |---|---|
 | text | `agent` 790 ms · `ingest` 0.2 ms |
-| image | `vision` 6153 ms · `agent` 783 ms · `ingest` 0.2 ms |
+| image | `vision` 6053 ms · `agent` 783 ms · `ingest` 0.2 ms |
 
 The fast path served **20%** of text turns, in 2–23 ms with no model call.
 
@@ -536,6 +536,56 @@ model **parroting the example in my own system prompt verbatim**, reporting *"3 
 after correcting rotis. Examples with memorable numbers get copied. The example is gone.
 
 ---
+
+### Did that change make it better, or just different?
+
+A pass/fail total answers *does it work*. It does not answer *did that change help*, which is the
+question you actually have after rewriting a prompt — and prompts regress sideways: you fix the
+phrasing of corrections and quietly break the one about fractions.
+
+```bash
+python evals/run_evals.py --save-baseline   # record the bar
+python evals/run_evals.py                   # every later run compares against it
+```
+
+A committed [`baseline.json`](evals/baseline.json) holds per-case scores, so a run reports movement
+rather than a number:
+
+```
+WORSE than baseline: correction_updates_not_appends 5->4,
+                     correction_inside_a_mixed_meal 3->2
+```
+
+Per-case rather than per-total on purpose: a total can sit still while one thing breaks and another
+is fixed. That output is from deliberately breaking `correct_meal` to check the comparison actually
+catches a regression, rather than trusting that it would.
+
+### On Postgres and Supabase
+
+This runs on SQLite, which the brief allows, and the reason is the first red flag on its own list:
+`pytest` and the eval suite have to pass on a clean clone **with no keys and no services**. A
+Postgres dependency makes verifying this project someone else's setup problem.
+
+The port is bounded rather than hypothetical. All SQL lives in three files —
+[`db.py`](src/calorai/db.py) (schema), [`repository.py`](src/calorai/repository.py) (meals),
+[`memory/store.py`](src/calorai/memory/store.py) — and nothing above them writes any: the CLI, the
+graph, the tools and the UI all go through the repository. What would actually change:
+
+| | SQLite | Postgres / Supabase |
+|---|---|---|
+| ids | `INTEGER PRIMARY KEY AUTOINCREMENT` | `BIGSERIAL` / `IDENTITY` |
+| placeholders | `?` | `%s` |
+| upsert | `INSERT OR REPLACE` | `ON CONFLICT ... DO UPDATE` (already used in one place) |
+| pragmas | `journal_mode`, `foreign_keys` | not needed |
+| conn | `sqlite3.connect` | a pool |
+
+Everything else — the derived-totals query, the soft deletes, the partial index the daily-totals
+query rides on — is standard SQL. And the design that keeps totals correct is a *schema* decision,
+not a SQLite one: it survives the move unchanged.
+
+The one thing I would not port as-is is `user_id` scoping. Here it is enforced by construction —
+tools close over the user id, so no code path takes one from the model. On Supabase that belongs in
+**row-level security** as well, so the database enforces it even if application code is wrong.
 
 ## Assumptions and trade-offs
 

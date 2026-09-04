@@ -16,6 +16,7 @@ with the wrong tool should not score zero, because the distinction between
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -139,9 +140,60 @@ def _check(case: Case, result: dict, conn) -> list[tuple[str, bool, str]]:
     return checks
 
 
-def run(cases: list[Case], verbose: bool = False) -> int:
+BASELINE = Path(__file__).parent / "baseline.json"
+
+
+def load_baseline() -> dict[str, list[int]]:
+    """Per-case scores from a previous run, if one was committed."""
+    if not BASELINE.exists():
+        return {}
+    return json.loads(BASELINE.read_text(encoding="utf-8")).get("cases", {})
+
+
+def report_drift(scores: dict[str, list[int]], baseline: dict[str, list[int]]) -> None:
+    """Say whether this run is better or worse than the recorded one.
+
+    A pass/fail total answers "does it work". It does not answer "did that
+    change help", which is the question you actually have when you have just
+    rewritten a prompt -- and prompts regress sideways: you fix the phrasing of
+    corrections and quietly break the one about fractions. Comparing
+    per-assertion scores against a committed baseline catches that, and catches
+    the case where the total is unchanged because one thing broke as another
+    was fixed.
+    """
+    if not baseline:
+        print(f"{DIM}no baseline recorded -- run with --save-baseline to set one{RESET}")
+        return
+
+    better, worse, added = [], [], []
+    for case_id, (passed, total) in scores.items():
+        if case_id not in baseline:
+            added.append(case_id)
+            continue
+        was, _ = baseline[case_id]
+        if passed > was:
+            better.append(f"{case_id} {was}->{passed}")
+        elif passed < was:
+            worse.append(f"{case_id} {was}->{passed}")
+    dropped = [c for c in baseline if c not in scores]
+
+    if not (better or worse or added or dropped):
+        print(f"{DIM}unchanged against baseline{RESET}")
+        return
+    if better:
+        print(f"{GREEN}better than baseline: {', '.join(better)}{RESET}")
+    if worse:
+        print(f"{RED}WORSE than baseline: {', '.join(worse)}{RESET}")
+    if added:
+        print(f"{DIM}new cases: {', '.join(added)}{RESET}")
+    if dropped:
+        print(f"{DIM}cases no longer run: {', '.join(dropped)}{RESET}")
+
+
+def run(cases: list[Case], verbose: bool = False, save_baseline: bool = False) -> int:
     passed_checks = total_checks = 0
     failed_cases: list[str] = []
+    scores: dict[str, list[int]] = {}
 
     for case in cases:
         reset_connections()
@@ -160,7 +212,9 @@ def run(cases: list[Case], verbose: bool = False) -> int:
 
         checks = _check(case, result, conn)
         ok = all(passed for _, passed, _ in checks)
-        passed_checks += sum(1 for _, passed, _ in checks if passed)
+        case_passed = sum(1 for _, passed, _ in checks if passed)
+        scores[case.id] = [case_passed, len(checks)]
+        passed_checks += case_passed
         total_checks += len(checks)
 
         mark = f"{GREEN}PASS{RESET}" if ok else f"{RED}FAIL{RESET}"
@@ -191,6 +245,16 @@ def run(cases: list[Case], verbose: bool = False) -> int:
               f"conversation set{RESET}")
     if failed_cases:
         print(f"{RED}failed: {', '.join(failed_cases)}{RESET}")
+
+    if save_baseline:
+        BASELINE.write_text(
+            json.dumps({"total": [passed_checks, total_checks], "cases": scores}, indent=2),
+            encoding="utf-8",
+        )
+        print(f"{DIM}baseline written to {BASELINE.name}{RESET}")
+    else:
+        report_drift(scores, load_baseline())
+
     return 0 if not failed_cases else 1
 
 
@@ -200,6 +264,8 @@ def main() -> int:
     parser.add_argument("--backend", help="override CALORAI_TEXT_BACKEND")
     parser.add_argument("--no-fast-path", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--save-baseline", action="store_true",
+                        help="record this run as the bar for future runs")
     args = parser.parse_args()
 
     # Default to the offline mock so a clean clone scores deterministically with
@@ -217,7 +283,7 @@ def main() -> int:
         if not cases:
             print(f"no case named {args.case}")
             return 2
-    return run(cases, verbose=args.verbose)
+    return run(cases, verbose=args.verbose, save_baseline=args.save_baseline)
 
 
 if __name__ == "__main__":

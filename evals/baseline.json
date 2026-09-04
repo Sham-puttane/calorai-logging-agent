@@ -1,0 +1,92 @@
+{
+  "total": [
+    77,
+    77
+  ],
+  "cases": {
+    "log_simple": [
+      5,
+      5
+    ],
+    "log_fraction": [
+      4,
+      4
+    ],
+    "log_vague_grazing": [
+      4,
+      4
+    ],
+    "correction_updates_not_appends": [
+      5,
+      5
+    ],
+    "correction_inside_a_mixed_meal": [
+      3,
+      3
+    ],
+    "correction_repeated_is_idempotent": [
+      3,
+      3
+    ],
+    "correction_changes_the_food_not_just_the_count": [
+      4,
+      4
+    ],
+    "same_as_yesterday": [
+      2,
+      2
+    ],
+    "my_usual_resolves_from_memory": [
+      4,
+      4
+    ],
+    "my_usual_inferred_from_repetition": [
+      2,
+      2
+    ],
+    "protein_query_reads_only": [
+      4,
+      4
+    ],
+    "calorie_query_reads_only": [
+      4,
+      4
+    ],
+    "query_on_empty_day_does_not_invent": [
+      3,
+      3
+    ],
+    "vegetarian_is_remembered_not_logged": [
+      3,
+      3
+    ],
+    "photo_waits_for_a_yes": [
+      4,
+      4
+    ],
+    "photo_logs_one_meal": [
+      4,
+      4
+    ],
+    "photo_with_caption_is_still_one_meal": [
+      5,
+      5
+    ],
+    "photo_ambiguity_is_surfaced_not_guessed": [
+      4,
+      4
+    ],
+    "unknown_food_is_not_invented": [
+      4,
+      4
+    ],
+    "delete_removes_from_totals": [
+      3,
+      3
+    ],
+    "users_are_isolated": [
+      3,
+      3
+    ]
+  }
+}

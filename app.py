@@ -130,11 +130,7 @@ def main() -> None:
             st.rerun()
 
         if st.button("clear this user's day", use_container_width=True):
-            conn.execute(
-                "UPDATE meal_items SET deleted_at=datetime('now') WHERE user_id=? AND local_date=date('now','localtime')",
-                (user,),
-            )
-            conn.commit()
+            repo.clear_day(conn, user)
             st.session_state.pop(f"history_{user}", None)
             st.rerun()
 
