@@ -43,7 +43,7 @@ from rich.panel import Panel  # noqa: E402
 from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
 from calorai.graph import build_graph, run_turn, stream_turn  # noqa: E402
-from calorai.llm import active_backends  # noqa: E402
+from calorai.llm import active_backends, tracing_status  # noqa: E402
 from calorai.memory import extractor, render  # noqa: E402
 
 console = Console()
@@ -105,7 +105,8 @@ def main() -> None:
             f"[bold]CalorAI[/bold]  ·  user [cyan]{args.user}[/cyan]  ·  db [dim]{args.db}[/dim]\n"
             f"text   [green]{backends['text']}[/green]\n"
             f"vision [green]{backends['vision']}[/green]\n"
-            f"[dim]fast path {'off' if args.no_fast_path else 'on'} · /help for commands[/dim]",
+            f"[dim]fast path {'off' if args.no_fast_path else 'on'} · "
+            f"tracing {tracing_status()} · /help for commands[/dim]",
             expand=False,
         )
     )

@@ -26,7 +26,7 @@ videos fail.
 ## Pre-flight — all four
 
 ```bash
-pytest tests/ -q                  # 163 passed
+pytest tests/ -q                  # 177 passed
 python evals/run_evals.py         # 21/21 cases, 77/77 assertions
 python bench\_real_e2e.py --delay 3
 del calorai.db                    # start from zero
@@ -203,7 +203,7 @@ pytest tests/ -q
 python evals/run_evals.py
 ```
 
-> "163 tests and 21 eval cases, and both run on a clean clone with no API keys, because there's a
+> "177 tests and 21 eval cases, and both run on a clean clone with no API keys, because there's a
 > deterministic offline backend. Eleven of those come straight from your test set — you can see
 > them named as they pass."
 

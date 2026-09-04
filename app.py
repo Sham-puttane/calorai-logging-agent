@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
 from calorai.graph import build_graph, stream_turn  # noqa: E402
-from calorai.llm import active_backends  # noqa: E402
+from calorai.llm import active_backends, tracing_status  # noqa: E402
 from calorai.memory import extractor, render  # noqa: E402
 from calorai.schemas import FoodItem  # noqa: E402
 
@@ -108,6 +108,7 @@ def main() -> None:
         backends = active_backends()
         st.caption(f"text: {backends['text']}")
         st.caption(f"vision: {backends['vision']}")
+        st.caption(f"tracing: {tracing_status()}")
         if backends["text"].startswith("mock"):
             st.warning("offline mock backend — set CALORAI_TEXT_BACKEND=groq in .env")
 

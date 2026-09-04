@@ -43,7 +43,7 @@ is still there and still accurate if you prefer it — you'll just need `PYTHONP
 backend. To verify the clone before configuring anything:
 
 ```bash
-pytest tests/ -q                 # 163 tests
+pytest tests/ -q                 # 177 tests
 python evals/run_evals.py        # 21 cases, 77 assertions
 ```
 
@@ -496,7 +496,7 @@ rejection is worth more than an assumed one.
 ## Testing and evals
 
 ```bash
-pytest tests/ -q                             # 163 tests
+pytest tests/ -q                             # 177 tests
 python evals/run_evals.py                    # 21 cases, 77 assertions
 python evals/run_evals.py --no-fast-path     # same, with the short-circuit off
 python evals/run_evals.py --backend groq     # score a real model
@@ -559,6 +559,34 @@ WORSE than baseline: correction_updates_not_appends 5->4,
 Per-case rather than per-total on purpose: a total can sit still while one thing breaks and another
 is fixed. That output is from deliberately breaking `correct_meal` to check the comparison actually
 catches a regression, rather than trusting that it would.
+
+### LangSmith tracing
+
+Free Developer tier — 5,000 traces/month, one seat, no credit card. In `.env`:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=calorai-agent
+```
+
+The CLI banner and the Streamlit sidebar both **report whether tracing is actually on**, because
+every way of getting this wrong is silent — a misspelled variable, a missing key, or a `.env`
+loaded after the client was built all produce no traces and no error:
+
+```
+tracing on -> project 'calorai-agent'
+tracing ON but no API key -- nothing will be recorded
+tracing off
+```
+
+`.env` is loaded at package import for the same reason: tracing is configured entirely through
+environment variables that LangChain reads on its own, so loading it later means anything
+constructed before that point is silently untraced.
+
+Legacy `LANGCHAIN_*` names are still accepted. Seven tests cover the states, including that the
+status string is cp1252-safe — it is printed to a Windows terminal, and a decorative arrow in there
+would crash the banner.
 
 ### On Postgres and Supabase
 

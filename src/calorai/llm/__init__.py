@@ -12,15 +12,21 @@ from a docs page -- see docs/RESEARCH.md for the numbers.
   Gemini's free tier allows so few images per model per day that ten benchmark
   photos exhausted it, which showed up as a p95 of 25 s that was pure rate-limit
   timeout. A model you cannot call is not a fast model.
-* **vision failover** -- Gemini `gemini-2.5-flash-lite`. Note the version is
-  *older* than the flagship on purpose: `gemini-3.5-flash-lite` is a thinking
-  model that measured 8.1 s warm and 20 s cold, and it rejects
-  `thinking_budget=0`. Nineteen times slower for a job that is structured
-  extraction, not reasoning.
-* **text failover** -- Gemini, because it is a genuinely different provider. It
-  was Cerebras until Cerebras returned 402 Payment Required on every model its
-  key could see. Failover matters here because Groq's free tier caps tokens per
-  minute and this agent reaches it in about two turns.
+* **text failover** -- Mistral `ministral-8b-latest`, 957 ms. A different
+  provider on purpose. It was Cerebras (402 Payment Required on every model its
+  key could see), then Gemini (daily quota spent).
+* **also verified** -- OpenRouter `ling-3.0-flash-fin:free`, 793 ms, correct
+  tool calls. What the demo runs on once Groq's daily budget is gone.
+
+Failover is load-bearing rather than decorative, and the reason is a number:
+Groq's free tier is **200,000 tokens per day** and this agent spends ~1.1k per
+call, so a working session exhausts it. The per-minute headers stay healthy
+while that happens, which is why a trivial "say OK" probe passes at the exact
+moment every real turn is failing.
+
+`gemini-3.5-flash-lite` was the first vision pick and is worth remembering as a
+trap: it is a *thinking* model, measured 8.1 s warm against its older sibling's
+429 ms, and it rejects `thinking_budget=0`.
 
 Groq was rejected for vision on evidence: its vision model was Llama 4 Scout,
 preview-only and deprecated in June 2026.
@@ -222,6 +228,30 @@ def get_fallback_vision_model() -> BaseChatModel | None:
         return build_text_model(name)
     except BackendUnavailable:
         return None
+
+
+def tracing_status() -> str:
+    """Whether LangSmith is actually recording, and why not when it isn't.
+
+    Worth surfacing because the failure mode is silence: tracing is configured
+    entirely through environment variables that LangChain reads on its own, so
+    a wrong variable name, a missing key, or a .env loaded too late all produce
+    no traces and no error. "Off" is a fine answer; "you think it's on and it
+    isn't" is not.
+    """
+    on = os.environ.get("LANGSMITH_TRACING", os.environ.get("LANGCHAIN_TRACING_V2", "")).lower()
+    key = os.environ.get("LANGSMITH_API_KEY", os.environ.get("LANGCHAIN_API_KEY", "")).strip()
+    project = os.environ.get("LANGSMITH_PROJECT", os.environ.get("LANGCHAIN_PROJECT", "default"))
+
+    if on not in {"1", "true", "yes"}:
+        return "off"
+    if not key:
+        return "ON but no API key -- nothing will be recorded"
+    # Reports the environment rather than asking the langsmith client, whose
+    # own tracing_is_enabled() is memoised: once evaluated it keeps answering
+    # with whatever the environment looked like at first call, which is exactly
+    # the stale reading this function exists to avoid.
+    return f"on -> project '{project}'"
 
 
 def active_backends() -> dict[str, str]:
