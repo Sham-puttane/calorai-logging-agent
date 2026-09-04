@@ -6,23 +6,36 @@ Work top to bottom. The first section is the one that actually matters.
 
 ## 1. Rotate the API keys — do this first
 
-Keys were briefly committed to `.env.example` and pushed. They were removed in a later
-commit, but **the blob is still in git history**, so making the repo public exposes them.
-Rotating makes that blob worthless.
+Three keys were committed to `.env.example` in commit `d559782` (03 Sep) and removed in a later
+commit. **The blob is still in git history**, so making the repo public exposes them. Rotating makes
+that blob worthless.
 
-| Provider | Where | What to do |
+Audited with `git log -p --all` against every secret pattern — these three, and only these three:
+
+| Provider | Leaked prefix | Where to rotate |
 |---|---|---|
-| **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | Delete the old key (trash icon), then **Create API Key** |
-| **Google** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Delete the key, then **Create API key** |
-| **Mistral** | [console.mistral.ai](https://console.mistral.ai) → API Keys | Revoke, then create a new one |
-| **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | Delete, then **Create Key** |
+| **Groq** | `***REMOVED-GROQ-KEY***…` | [console.groq.com/keys](https://console.groq.com/keys) — trash icon on the old key, then **Create API Key** |
+| **Google** | `AQ.Ab8RN6…` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — delete, then **Create API key** |
+| **Cerebras** | `***REMOVED-CEREBRAS-KEY***…` | [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys — revoke (this one is unused; it returned 402 on every model, so just revoke it) |
 
-Then paste the new values into `D:\calorai-agent\.env`.
+**Mistral, OpenRouter and LangSmith were never exposed** — they were added to `.env.example` after
+the leak, always with empty values. You do not need to touch them.
 
-**`.env` is gitignored. `.env.example` is not.** That is the mistake that caused this —
-never put a real value in `.env.example`.
+Then paste the two you actually use (Groq, Google) into `D:\calorai-agent\.env`. Nothing else
+changes — `.env` is gitignored and the app reads it at import.
 
-Verify nothing is staged before every push:
+Verify the new keys work before you record:
+
+```bash
+cd D:\calorai-agent
+.venv\Scripts\activate
+python bench\_real_e2e.py --delay 5
+```
+
+Read the `db:` line under every turn, not just the replies.
+
+**`.env` is gitignored. `.env.example` is not.** That is the mistake that caused this — never put a
+real value in `.env.example`. Check before every push:
 
 ```bash
 git status --short
@@ -31,19 +44,19 @@ git diff --cached --name-only | grep -i env    # must print nothing
 
 ### Optionally: scrub the history too
 
-Rotating is sufficient for security. But a public repo whose history contains secrets is
-a bad look in a hiring context, so if you want it clean:
+Rotating is sufficient for security. But a public repo whose history contains secrets is a bad look
+in a hiring context, so if you want it clean:
 
 ```bash
 pip install git-filter-repo
 cd D:\calorai-agent
 git filter-repo --path .env.example --invert-paths --force
+git remote add origin <your repo url>    # filter-repo drops the remote
 git push origin main --force
 ```
 
-That drops `.env.example` from every commit. Re-add the current (empty) one afterwards
-and commit normally. **Rotate the keys regardless** — history scrubbing is cosmetic, and
-GitHub may retain the blob.
+That drops `.env.example` from every commit. Re-add the current (empty) one afterwards and commit
+normally. **Rotate regardless** — history scrubbing is cosmetic, and GitHub may retain the blob.
 
 ---
 
