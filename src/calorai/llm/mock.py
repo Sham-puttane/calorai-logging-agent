@@ -62,6 +62,28 @@ _PLATE_ITEM_RE = re.compile(
 
 _SKIPPED_RE = re.compile(r"\b(grazed|grazing|snacked|picked at|nibbled)\b", re.I)
 
+# Deletes are tested BEFORE foods are parsed: "scratch the samosas" names a
+# food, and a food-first rule would cheerfully log it a second time.
+_DELETE_RE = re.compile(
+    r"\b(scratch that|scratch the|remove|delete|undo|forget that"
+    r"|didn'?t (?:actually )?(?:have|eat)|never mind)\b",
+    re.I,
+)
+
+# Last resort for a food the table has never heard of. A real model logs
+# "zorblax casserole" without blinking; without this the rule engine could only
+# ever log foods it already knows, and the unknown-food path would go untested.
+_LOG_INTENT_RE = re.compile(
+    r"\b(?:had|ate|having|just had|finished|grabbed)\s+"
+    r"(?:some |a |an |the |my )?([a-z][a-z\s]{2,40})",
+    re.I,
+)
+
+# The alias expansion ingest writes:
+#   ("my usual" for this person means: 2 piece paratha, 1 cup chai)
+_ALIAS_BLOCK_RE = re.compile(r"for this person means:\s*(.+?)\)\s*$", re.S)
+_QTY_UNIT_NAME_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+(\S+)\s+(.+?)\s*$")
+
 
 def _detect_slot(text: str) -> str | None:
     low = text.lower()
@@ -196,8 +218,23 @@ class MockChatModel(BaseChatModel):
                 "log_meal", {"items": plate, "slot": "", "note": "from photo"}
             )
 
+        # "my usual" was already expanded to concrete food by ingest, before
+        # this model was ever called. Log what it resolved to.
+        alias_items = self._alias_items(messages)
+        if alias_items:
+            return self._call(
+                "log_meal",
+                {"items": alias_items, "slot": _detect_slot(text) or "", "note": text[:120]},
+            )
+
         if _TOTALS_RE.search(low):
             return self._call("get_daily_totals", {"day": "today"})
+
+        if _DELETE_RE.search(low):
+            foods = parse_foods(text)
+            return self._call(
+                "delete_meal", {"target_hint": foods[0]["name"] if foods else ""}
+            )
 
         if _CORRECTION_RE.search(low):
             foods = parse_foods(text)
@@ -235,6 +272,17 @@ class MockChatModel(BaseChatModel):
                 },
             )
 
+        # a food the table does not know, stated as something eaten
+        intent = _LOG_INTENT_RE.search(text)
+        if intent and not _SKIPPED_RE.search(low):
+            phrase = intent.group(1).strip(" .,!?")
+            if phrase:
+                return self._call(
+                    "log_meal",
+                    {"items": [{"name": phrase, "qty": 1, "unit": "serving"}],
+                     "slot": _detect_slot(text) or "", "note": text[:120]},
+                )
+
         if _SKIPPED_RE.search(low):
             return self._call(
                 "log_meal",
@@ -265,6 +313,22 @@ class MockChatModel(BaseChatModel):
                     {"name": name.strip(), "qty": float(qty), "unit": unit}
                     for qty, unit, name in _PLATE_ITEM_RE.findall(content)
                 ]
+        return []
+
+    def _alias_items(self, messages: list[BaseMessage]) -> list[dict[str, Any]]:
+        for message in reversed(messages):
+            content = str(getattr(message, "content", ""))
+            if isinstance(message, SystemMessage) and "for this person means:" in content:
+                block = _ALIAS_BLOCK_RE.search(content)
+                if not block:
+                    return []
+                items = []
+                for chunk in block.group(1).split(","):
+                    parsed = _QTY_UNIT_NAME_RE.match(chunk)
+                    if parsed:
+                        qty, unit, name = parsed.groups()
+                        items.append({"name": name, "qty": float(qty), "unit": unit})
+                return items
         return []
 
     def _call(self, name: str, args: dict[str, Any]) -> AIMessage:

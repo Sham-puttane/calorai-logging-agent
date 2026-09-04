@@ -1,0 +1,190 @@
+# Eval cases.
+#
+# "Correct" for this task is scored on four independent axes, because a reply
+# can be well-phrased and still have corrupted the database:
+#
+#   tools   did the agent reach for the right tool (and NOT the wrong one)
+#   db      did the data end up right -- calories, and the live row count
+#   asks    did it ask when it should have, and stay quiet when it shouldn't
+#   reply   does the wording mention what it did
+#
+# `db.items` is the load-bearing assertion on every correction case: a wrong
+# tool choice that logs instead of updating still produces plausible-looking
+# calories, and only the row count catches it.
+#
+# All 11 messages from the brief's test conversation set appear here.
+
+- id: log_simple
+  note: "brief: 'had 2 parathas and chai for breakfast'"
+  message: had 2 parathas and chai for breakfast
+  expect:
+    tools: [log_meal]
+    db: {kcal: 430, items: 2}
+    asks: false
+    reply_contains: [paratha]
+
+- id: log_fraction
+  note: "brief: partial portion stated after the food, not before"
+  message: leftover biryani, maybe two thirds of the box
+  expect:
+    tools: [log_meal]
+    db: {kcal: 161, items: 1}
+    asks: false
+
+- id: log_vague_grazing
+  note: "brief: 'skipped lunch but grazed all afternoon' -- log an estimate, do NOT interrogate"
+  message: skipped lunch but grazed all afternoon
+  expect:
+    tools: [log_meal]
+    db: {items: 1, estimated: 1}
+    asks: false
+
+- id: correction_updates_not_appends
+  note: "brief: THE case -- totals must update, not double-count"
+  setup_meals:
+    - {name: roti, qty: 2, unit: piece}
+  message: actually that was 3 rotis not 2
+  expect:
+    tools: [correct_meal]
+    tools_absent: [log_meal]
+    db: {kcal: 315, items: 1}
+    asks: false
+
+- id: correction_inside_a_mixed_meal
+  note: only the named item moves; the rest of the meal is untouched
+  setup_meals:
+    - {name: paratha, qty: 2, unit: piece}
+    - {name: chai, qty: 1, unit: cup}
+  message: actually that was 1 paratha not 2
+  expect:
+    tools: [correct_meal]
+    db: {kcal: 260, items: 2}
+
+- id: correction_repeated_is_idempotent
+  setup_meals:
+    - {name: roti, qty: 2, unit: piece}
+  setup_messages:
+    - actually that was 3 rotis not 2
+  message: sorry make it 4 rotis
+  expect:
+    tools: [correct_meal]
+    db: {kcal: 420, items: 1}
+
+- id: same_as_yesterday
+  note: "brief: 'same as yesterday' -- a database question, not a memory one"
+  setup_meals:
+    - {name: paratha, qty: 2, unit: piece, day: yesterday, slot: breakfast}
+    - {name: chai, qty: 1, unit: cup, day: yesterday, slot: breakfast}
+  message: same as yesterday
+  expect:
+    tools: [find_meals]
+    asks: false
+
+- id: my_usual_resolves_from_memory
+  note: "brief: 'my usual' -- memory, resolved before the model is called"
+  setup_alias:
+    phrase: my usual
+    items:
+      - {name: paratha, qty: 2, unit: piece}
+      - {name: chai, qty: 1, unit: cup}
+  message: my usual
+  expect:
+    tools: [log_meal]
+    db: {kcal: 430, items: 2}
+    asks: false
+
+- id: my_usual_inferred_from_repetition
+  note: three identical breakfasts make a habit the agent can name
+  setup_meals:
+    - {name: oats, qty: 1, unit: katori, slot: breakfast, meal: 1}
+    - {name: oats, qty: 1, unit: katori, slot: breakfast, meal: 2}
+    - {name: oats, qty: 1, unit: katori, slot: breakfast, meal: 3}
+  message: my usual
+  expect:
+    tools: [log_meal]
+    db: {items: 4}
+
+- id: protein_query_reads_only
+  note: "brief: 'how much protein have I had today?'"
+  setup_meals:
+    - {name: dal, qty: 1, unit: katori}
+  message: how much protein have I had today?
+  expect:
+    writes: false
+    db: {kcal: 150, items: 1}
+    reply_contains: ["9"]
+
+- id: calorie_query_reads_only
+  note: "brief: 'how am I doing on calories?'"
+  setup_meals:
+    - {name: roti, qty: 2, unit: piece}
+  message: how am I doing on calories?
+  expect:
+    writes: false
+    db: {kcal: 210, items: 1}
+    reply_contains: ["210"]
+
+- id: query_on_empty_day_does_not_invent
+  message: how am I doing on calories?
+  expect:
+    writes: false
+    db: {kcal: 0, items: 0}
+
+- id: vegetarian_is_remembered_not_logged
+  note: "brief: 'i'm vegetarian btw' -- a fact about the person, not a meal"
+  message: i'm vegetarian btw
+  expect:
+    writes: false
+    db: {items: 0}
+    facts: {diet: vegetarian}
+
+- id: photo_logs_one_meal
+  note: "brief: [photo of a plate]"
+  message: ""
+  image: images/plate.jpg
+  expect:
+    tools: [log_meal]
+    db: {items: 3, meals: 1}
+    asks: false
+
+- id: photo_with_caption_is_still_one_meal
+  note: "brief: [photo] 'half of this was my brother's' -- both models, ONE meal"
+  message: half of this was my brother's
+  image: images/plate.jpg
+  expect:
+    tools: [log_meal]
+    db: {items: 3, meals: 1, kcal: 241}
+    asks: false
+
+- id: photo_ambiguity_is_surfaced_not_guessed
+  note: low id_confidence must produce a question, not a silent log
+  message: ""
+  image: images/ambiguous_plate.jpg
+  expect:
+    writes: false
+    db: {items: 0}
+    asks: true
+    reply_contains: [tofu]
+
+- id: unknown_food_is_not_invented
+  message: had some zorblax casserole
+  expect:
+    tools: [log_meal]
+    db: {kcal: 0, items: 1, estimated: 1}
+
+- id: delete_removes_from_totals
+  setup_meals:
+    - {name: samosa, qty: 2, unit: piece}
+  message: scratch the samosas, I didn't have them
+  expect:
+    tools: [delete_meal]
+    db: {kcal: 0, items: 0}
+
+- id: users_are_isolated
+  note: another user's meals must not leak into this one's totals
+  setup_meals:
+    - {name: biryani, qty: 2, unit: katori, user: someone_else}
+  message: how am I doing on calories?
+  expect:
+    writes: false
+    db: {kcal: 0, items: 0}
