@@ -27,7 +27,7 @@ from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
 from calorai.graph import build_graph, stream_turn  # noqa: E402
 from calorai.llm import active_backends  # noqa: E402
-from calorai.memory import extractor, render, store  # noqa: E402
+from calorai.memory import extractor, render  # noqa: E402
 from calorai.schemas import FoodItem  # noqa: E402
 
 st.set_page_config(page_title="CalorAI", page_icon="🍛", layout="wide")
@@ -106,20 +106,21 @@ def main() -> None:
         if backends["text"].startswith("mock"):
             st.warning("offline mock backend — set CALORAI_TEXT_BACKEND=groq in .env")
 
-        # "same as yesterday" and "my usual" need a past to refer to. A brand new
-        # user has neither, so the agent correctly answers "nothing logged
-        # yesterday" -- which looks like a bug in a demo. This gives them one.
-        if st.button("seed a returning user", use_container_width=True):
+        # "same as yesterday" needs a yesterday, and a brand new user has none,
+        # so the agent correctly answers "nothing logged" -- which reads as a
+        # bug in a demo. This seeds ONLY past meals.
+        #
+        # It deliberately does NOT plant a "my usual", even though that would
+        # also be convenient: an alias the user never taught is a memory they
+        # did not create, and showing it as though the agent learned something
+        # would be a lie. "remember this as my usual" teaches it live, which is
+        # the more convincing demonstration anyway.
+        if st.button("seed yesterday's meals", use_container_width=True):
             repo.log_meal(
                 conn, user,
                 [FoodItem(name="idli", qty=3, unit="piece"),
                  FoodItem(name="sambar", qty=1, unit="katori")],
                 slot="breakfast", day="yesterday",
-            )
-            store.put_alias(
-                conn, user, "my usual",
-                [{"name": "oats", "qty": 1, "unit": "katori"},
-                 {"name": "banana", "qty": 1, "unit": "piece"}],
             )
             st.rerun()
 
