@@ -164,7 +164,21 @@ def main() -> None:
 
     if not message and not photo:
         return
-    if photo and not typed and not message:
+
+    # A photo is STAGED, not sent. Streamlit reruns the moment a file is
+    # uploaded, so firing the turn there sent the picture before the user could
+    # type anything -- which made "[photo] half of this was my brother's", the
+    # case the brief cares most about, unreachable from this UI. An upload now
+    # shows a preview and waits for either a caption or an explicit send.
+    if photo is not None and not message:
+        preview, action = st.columns([3, 1])
+        preview.image(photo, width=220)
+        preview.caption(
+            "add context below and press Enter — e.g. *half of this was my "
+            "brother's*, or *this was lunch* — or send it as-is"
+        )
+        if not action.button("send photo", use_container_width=True):
+            return
         message = ""
 
     image_path = None

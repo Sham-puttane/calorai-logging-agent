@@ -82,6 +82,12 @@ streamlit run app.py                        # chat UI  (pip install -e ".[ui]")
 In the CLI: `img:images/plate.jpg optional caption` sends a photo. `/totals`, `/memory`,
 `/history`, `/debug` (per-stage timings for the last turn), `/help`, `/quit`.
 
+A photo can carry a caption in both interfaces — `img:plate.jpg half of this was my brother's` in
+the CLI, and in the UI an upload is *staged* with a preview so you can type context before sending.
+That staging is deliberate: Streamlit reruns the instant a file is uploaded, so sending on upload
+fired the turn before the user could type, which made the brief's hardest case unreachable from
+the UI.
+
 [`app.py`](app.py) is a deliberately thin Streamlit UI — the brief says the agent code is what
 gets read, so it holds no logic of its own and calls the same `stream_turn` the CLI does. It earns
 its place with the sidebar: the day's totals and the item table sit beside the conversation and
