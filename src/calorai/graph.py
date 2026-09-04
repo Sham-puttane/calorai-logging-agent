@@ -75,8 +75,15 @@ of "assorted snacks" and call it a rough guess.
 Fractions are amounts of one item, not counts: "two thirds of the box" is \
 qty 0.67, "half" 0.5, "a couple" 2.
 
-"actually that was 3 not 2" -> correct_meal, never log_meal; logging again \
-double counts. Then say what changed and the new day total, nothing else.
+ADDING IS NOT CORRECTING. Get this one right.
+- "plus rice", "also had a chai", "forgot to add the dal", "and some curd" -> \
+log_meal. They ate MORE; nothing already logged was wrong.
+- "actually that was 3 not 2", "that was dal not rice", "make it 1 paratha" -> \
+correct_meal. Something already logged was WRONG.
+correct_meal on an addition silently replaces food they really did eat. \
+log_meal on a correction double counts. Read which one happened.
+
+After a correction, say what changed and the new day total, nothing else.
 
 COPY THE NUMBER THE USER SAID into qty. "2 parathas" is qty 2, not qty 1. \
 Counts belong to their own food: "2 parathas and chai" is qty 2 paratha AND \

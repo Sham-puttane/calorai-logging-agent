@@ -126,7 +126,11 @@ def make_tools(
         new_unit: str = "",
         scale_whole_meal: float | None = None,
     ) -> str:
-        """Fix something already logged. Updates in place, never double counts.
+        """Fix something already logged that was WRONG. Updates in place.
+
+        NOT for additions. 'plus rice', 'also had a chai', 'forgot the dal'
+        mean they ate more -- use log_meal. This tool REPLACES, so using it for
+        an addition deletes food they really did eat.
 
         One food: 'actually that was 3 rotis not 2' -> target_hint='roti',
         new_qty=3. Empty target_hint means the most recent item.
@@ -143,6 +147,9 @@ def make_tools(
                 conn, user_id, target_hint=target_hint,
                 new_qty=new_qty, new_name=new_name or None,
                 new_unit=new_unit or None, estimator=estimator,
+                # the raw turn, so the repository can veto a substitution that
+                # is really an addition
+                message=note_ref.get("text"),
             )
         )
 

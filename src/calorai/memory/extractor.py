@@ -33,13 +33,15 @@ from . import store
 # fail on "allergic" and "target" fail on "targeting". Only the leading
 # boundary is anchored.
 _SIGNAL_RE = re.compile(
+    # "remember"/"save" so "remember this as my usual" survives the gate
+
     r"\b("
     r"i'?m\s|i\s+am\s|my\s|me\b"
     r"|vegetarian|vegan|non-?veg|eggetarian|pescatarian|jain|halal|kosher"
     r"|allerg|intoleran|lactose|gluten|diabetic"
     r"|target|goal|aiming|trying to|cutting|bulking|deficit"
     r"|don'?t eat|do not eat|avoid|can'?t eat|stopped eating|gave up"
-    r"|usual|always|never|every day|prefer"
+    r"|usual|always|never|every day|prefer|remember|save this|make this"
     r")",
     re.I,
 )
@@ -173,4 +175,10 @@ def maybe_learn_alias(conn: sqlite3.Connection, user_id: str, text: str) -> bool
         if items:
             store.put_alias(conn, user_id, "my usual", items, source="explicit")
             return True
+
+    # "remember this as my usual" names no food -- it points at the meal that
+    # was just logged, so the alias is built from the log instead of the text.
+    if store.means_remember_recent(text):
+        return store.learn_alias_from_recent_meal(conn, user_id) is not None
+
     return store.learn_usual_if_repeated(conn, user_id)

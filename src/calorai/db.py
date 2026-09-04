@@ -104,7 +104,10 @@ CREATE TABLE IF NOT EXISTS aliases (
     created_at   TEXT NOT NULL,
     last_used_at TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_user_phrase ON aliases(user_id, phrase);
+-- Not unique on (user, phrase): the same phrase holds one entry per meal slot
+-- plus an unscoped fallback, so "my usual" can mean porridge at 8am and
+-- something else at 8pm.
+CREATE INDEX IF NOT EXISTS idx_alias_user_phrase ON aliases(user_id, phrase);
 
 -- A photo the agent has read but NOT yet logged, waiting on the user to say
 -- yes. Photos are the one input where the user delegates the entire

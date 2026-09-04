@@ -9,6 +9,7 @@ counter -- there is no counter to desynchronise.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
@@ -141,6 +142,27 @@ def _find_recent_item(
     return None
 
 
+# Phrases that mean "I ate more", as opposed to "what you recorded was wrong".
+# Used only to veto a substitution, never to route a turn -- routing is the
+# model's job, and this is the seatbelt on the one branch that destroys data.
+_ADDITION_RE = re.compile(
+    r"\b(plus\b|also\b|as well|too\b|forgot(?: to add| about)?|additionally"
+    r"|and (?:some|a|an|the|then)\b|add(?:ed|ing)?\b|along with|on top of)",
+    re.I,
+)
+
+
+def _looks_like_addition(message: str | None) -> bool:
+    if not message:
+        return False
+    low = message.lower()
+    # "actually" and friends outrank an incidental "and" -- "actually that was
+    # dal and not rice" is still a correction.
+    if re.search(r"\b(actually|instead of|not\s+\d|rather than|i meant|make it)\b", low):
+        return False
+    return bool(_ADDITION_RE.search(low))
+
+
 def _substitution_target(
     conn: sqlite3.Connection, user_id: str, new_unit: str
 ) -> sqlite3.Row | None:
@@ -175,6 +197,7 @@ def correct_meal(
     new_name: str | None = None,
     new_unit: str | None = None,
     estimator: Callable[[str, str], Nutrition | None] | None = None,
+    message: str | None = None,
 ) -> dict[str, Any]:
     """UPDATE an existing item in place. Never inserts.
 
@@ -197,6 +220,21 @@ def correct_meal(
     # rewriting the most recent row on a guess is worse than refusing.
     substituting = False
     if row is None and target_hint.strip():
+        # Structural guard on the destructive path. Substitution REPLACES a
+        # row, so if the message that triggered it reads like an addition
+        # ("plus rice", "forgot the dal") we refuse rather than delete food the
+        # person actually ate. The prompt also teaches this distinction, but a
+        # prompt is probabilistic and this particular mistake is silent and
+        # lossy -- the same reason correct_meal is a separate tool from
+        # log_meal in the first place.
+        if _looks_like_addition(message):
+            return {
+                "ok": False,
+                "error": (
+                    f"'{target_hint}' is not logged yet and this reads like an addition, "
+                    "not a correction. Use log_meal to add it."
+                ),
+            }
         known = resolve(conn, FoodItem(name=target_hint, qty=1), estimator=None)
         if known.source != "unknown":
             row = _substitution_target(conn, user_id, known.unit)

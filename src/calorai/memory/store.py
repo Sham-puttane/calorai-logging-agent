@@ -124,12 +124,25 @@ def put_alias(
     slot: str | None = None,
     source: str = "explicit",
 ) -> None:
+    """Store shorthand, scoped to a meal slot when one is known.
+
+    "my usual" means porridge at 8am and something else entirely at 8pm, so the
+    same phrase can hold one entry per slot plus one unscoped fallback.
+
+    Replace-then-insert rather than an upsert, because the natural key is
+    (user, phrase, slot) and SQLite will not treat two NULL slots as a conflict
+    — an upsert would quietly accumulate duplicate unscoped rows.
+    """
+    phrase = phrase.lower().strip()
+    conn.execute(
+        "DELETE FROM aliases WHERE user_id = ? AND phrase = ?"
+        " AND COALESCE(slot,'') = COALESCE(?,'')",
+        (user_id, phrase, slot),
+    )
     conn.execute(
         "INSERT INTO aliases (user_id, phrase, items_json, slot, source, created_at, last_used_at)"
-        " VALUES (?,?,?,?,?,?,?)"
-        " ON CONFLICT(user_id, phrase) DO UPDATE SET"
-        " items_json=excluded.items_json, slot=excluded.slot, source=excluded.source",
-        (user_id, phrase.lower().strip(), json.dumps(items), slot, source, utcnow(), utcnow()),
+        " VALUES (?,?,?,?,?,?,?)",
+        (user_id, phrase, json.dumps(items), slot, source, utcnow(), utcnow()),
     )
     conn.commit()
 
@@ -151,35 +164,55 @@ def get_aliases(conn: sqlite3.Connection, user_id: str) -> list[dict[str, Any]]:
 
 
 def resolve_alias(
-    conn: sqlite3.Connection, user_id: str, text: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    text: str,
+    slot: str | None = None,
 ) -> dict[str, Any] | None:
     """Deterministic lookup, run before the model sees the message.
 
     Returns the stored meal for 'my usual' and friends. Cheap, exact, and it
     keeps a pronoun from ever reaching the model as something to guess at.
-    """
-    low = text.lower().strip()
-    stored = get_aliases(conn, user_id)
 
-    for entry in stored:
-        if entry["phrase"] and entry["phrase"] in low:
-            _touch(conn, user_id, entry["phrase"])
-            return entry
+    Scoping: "my usual" said at breakfast should mean the breakfast one. The
+    order is slot match, then an unscoped entry, then any entry at all —
+    because a wrong-slot usual is still far more useful than "I don't know what
+    your usual is", and the user can correct it in three words.
+
+    `slot` defaults to the current time of day. That is right for someone with
+    three meals a day and only a guess for a grazer, which is why an unscoped
+    alias is kept as a fallback rather than everything being forced into a slot.
+    """
+    from ..repository import infer_slot
+
+    low = text.lower().strip()
+    slot = slot or infer_slot()
+    matches = [e for e in get_aliases(conn, user_id) if e["phrase"] and e["phrase"] in low]
+
+    if matches:
+        best = (
+            next((e for e in matches if e.get("slot") == slot), None)
+            or next((e for e in matches if not e.get("slot")), None)
+            or matches[0]
+        )
+        _touch(conn, user_id, best["phrase"], best.get("slot"))
+        return best
 
     # Generic trigger with nothing learned yet -- try to infer one from history
-    # rather than replying "I don't know what your usual is".
+    # rather than replying "I don't know what your usual is". Prefer this slot's
+    # habit, then fall back to any.
     if any(trigger in low for trigger in _ALIAS_TRIGGERS):
-        inferred = infer_usual(conn, user_id)
-        if inferred:
-            return inferred
+        return infer_usual(conn, user_id, slot=slot) or infer_usual(conn, user_id)
     return None
 
 
-def _touch(conn: sqlite3.Connection, user_id: str, phrase: str) -> None:
+def _touch(
+    conn: sqlite3.Connection, user_id: str, phrase: str, slot: str | None = None
+) -> None:
     conn.execute(
         "UPDATE aliases SET hits = hits + 1, last_used_at = ?"
-        " WHERE user_id = ? AND phrase = ?",
-        (utcnow(), user_id, phrase),
+        " WHERE user_id = ? AND phrase = ? AND COALESCE(slot,'') = COALESCE(?,'')",
+        (utcnow(), user_id, phrase, slot),
     )
     conn.commit()
 
@@ -266,6 +299,23 @@ _DEFINE_RE = re.compile(
     r"\b(?:my |the )?usual(?:\s+\w+)?\s+is\b(?P<body>.+)", re.I
 )
 
+# "remember this as my usual", "that's my usual", "make this my usual".
+#
+# This is the phrasing people actually reach for, and it is a different shape
+# from "my usual is X": it names no food at all. The meal is the one that was
+# just logged, which means the alias has to be built from the log rather than
+# parsed out of the sentence. Missing this was why "remember this dinner thats
+# my usual" did nothing.
+_REMEMBER_RECENT_RE = re.compile(
+    r"("
+    r"(?:remember|save|store|keep)\b[^.]{0,40}?\b(?:my|the)?\s*usual"
+    r"|(?:that'?s|this is|thats)\s+(?:my|the)\s+usual"
+    r"|make\s+(?:this|that)\s+(?:my|the)\s+usual"
+    r"|(?:my|the)\s+usual\s*[.!]?$"
+    r")",
+    re.I,
+)
+
 
 def detect_alias_definition(text: str) -> str | None:
     """'my usual is 2 parathas and chai' -> '2 parathas and chai'."""
@@ -274,3 +324,47 @@ def detect_alias_definition(text: str) -> str | None:
         return None
     body = match.group("body").strip(" .,:")
     return body or None
+
+
+def means_remember_recent(text: str) -> bool:
+    """True for "remember this as my usual" and friends, which point at the
+    last meal rather than naming one."""
+    if detect_alias_definition(text):
+        return False  # "my usual is X" names its own food; handled above
+    low = (text or "").lower().strip()
+    # "my usual" on its own is someone *using* the alias, not defining it.
+    if low in {"my usual", "the usual", "my usual please"}:
+        return False
+    return bool(_REMEMBER_RECENT_RE.search(low))
+
+
+def learn_alias_from_recent_meal(
+    conn: sqlite3.Connection, user_id: str, phrase: str = "my usual"
+) -> dict[str, Any] | None:
+    """Store the most recently logged meal under `phrase`.
+
+    Explicit, so it overwrites an inferred alias: the user telling you outright
+    beats a habit guessed from repetition.
+    """
+    row = conn.execute(
+        "SELECT meal_id FROM meal_items WHERE user_id = ? AND deleted_at IS NULL"
+        " ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    items = [
+        {"name": r["name"], "qty": r["qty"], "unit": r["unit"]}
+        for r in conn.execute(
+            "SELECT name, qty, unit FROM meal_items"
+            " WHERE meal_id = ? AND deleted_at IS NULL",
+            (row["meal_id"],),
+        )
+    ]
+    if not items:
+        return None
+    slot = conn.execute(
+        "SELECT slot FROM meals WHERE id = ?", (row["meal_id"],)
+    ).fetchone()["slot"]
+    put_alias(conn, user_id, phrase, items, slot, source="explicit")
+    return {"phrase": phrase, "items": items, "slot": slot}
