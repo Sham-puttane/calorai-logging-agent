@@ -41,10 +41,28 @@ python evals/run_evals.py        # 19 cases, 69 assertions
 
 For real conversation, put free keys in `.env` (no credit card for either):
 
-| Key | Where | Used for |
-|---|---|---|
-| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | the agent loop |
-| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | vision, and text failover |
+| Key | Where | Used for | Needed? |
+|---|---|---|---|
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | the agent loop | yes |
+| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | vision, and text failover | yes |
+| `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai) | second vision provider (Pixtral), failover | optional |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | extra failover breadth | optional |
+
+Backends are selected by env var, so swapping providers is a config change rather than a code one:
+
+```bash
+CALORAI_TEXT_BACKEND=groq          # groq | gemini | mistral | openrouter | cerebras | ollama | mock
+CALORAI_VISION_BACKEND=gemini      # gemini | mistral-vision | ollama | mock
+CALORAI_VISION_FALLBACK=mistral-vision
+CALORAI_TEXT_FALLBACK=gemini
+```
+
+Every provider except Groq, Gemini and Ollama speaks the OpenAI wire protocol, so adding one is
+about ten lines in [`llm/__init__.py`](src/calorai/llm/__init__.py) — the adapter is a thin seam
+and the graph never learns which vendor answered.
+
+> Note: Mistral's free tier requires opting into training on your inputs. Fine for a demo, unfit
+> for real user data — the same caveat applies to most no-card free tiers.
 
 ### Try it
 
@@ -278,23 +296,34 @@ Measured on the real stack: Groq `openai/gpt-oss-20b` for text, Gemini `gemini-2
 vision. Reproduce with `python bench/latency.py --n 20 --delay 8`; the raw report lands in
 `bench/results/latest.json`.
 
-| path | n | **p50** | **p95** | mean | max | throttled |
-|---|---|---|---|---|---|---|
-| **text** | 20 | **766 ms** | **1257 ms** | 661 ms | 1289 ms | 0 |
-| **image** | — | *not yet measured* | | | | |
+| path | n | **p50** | **p95** | mean | max |
+|---|---|---|---|---|---|
+| **text** | 20 | **766 ms** | **1257 ms** | 661 ms | 1289 ms |
+| **image** | 10 | **5837 ms** | **25104 ms** | 11449 ms | 25117 ms |
 
 Cold start (first call, includes client construction and TLS): **924 ms**.
-Stage p50: `agent` 790 ms · `ingest` 0 ms. The fast path served **20%** of turns.
 
-Two things to read off that table. The agent's own overhead — alias resolution, memory load,
-routing — is **sub-millisecond**; essentially all of p50 is the model round trip, which is where it
-should be. And p95 is only 1.6× p50, so there's no long tail hiding in the loop.
+| path | stage p50 |
+|---|---|
+| text | `agent` 790 ms · `ingest` 0.2 ms |
+| image | `vision` 5033 ms · `agent` 966 ms · `ingest` 0.2 ms |
 
-**The image path is not yet measured.** It needs real plate photos in `images/`, which this repo
-doesn't ship. The pipeline is exercised end-to-end by the eval suite and by
-`tests/test_graph.py::test_photo_plus_caption_produces_exactly_one_meal`, and the vision model
-itself measured 429 ms warm, so the expected shape is one vision call plus one text call. I'd
-rather leave this blank than publish a number I didn't take.
+The fast path served **20%** of text turns, in 2–23 ms with no model call.
+
+**Reading the text row:** the agent's own overhead — alias resolution, memory load, routing — is
+**sub-millisecond**. Essentially all of p50 is the model round trip, which is where it should be,
+and p95 is only 1.6× p50, so there's no tail hiding in the loop.
+
+**Reading the image row, honestly:** that p95 of 25.1 s is *not* slow inference. It is the client
+timeout firing on rate-limited calls — Gemini's free tier allows very few image requests per day
+per model, and ten benchmark photos is enough to exhaust it. The p50 of 5.8 s is the real
+unthrottled shape: one vision call (~5 s, dominated by upload and image processing) plus one text
+call (~1 s). The gap between p50 and p95 here is a free-tier artifact, not an architectural one,
+and it is why the image path now has a **second vision provider** configured as failover
+(`CALORAI_VISION_FALLBACK`) — swapping providers is much faster than waiting out a 429.
+
+I'd rather show that ugly p95 with an explanation than quietly drop the throttled samples and
+publish a flattering number.
 
 ### What I did to get there
 

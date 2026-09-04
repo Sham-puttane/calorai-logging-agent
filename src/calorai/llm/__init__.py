@@ -33,6 +33,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 load_dotenv()
 
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class BackendUnavailable(RuntimeError):
@@ -112,6 +114,48 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
             timeout=25,
         )
 
+    # Mistral and OpenRouter both speak the OpenAI wire protocol, so they need
+    # a base_url rather than a new client library. Worth noting because it is
+    # why adding a provider here costs about ten lines: the adapter is a thin
+    # seam, and the graph never learns which vendor answered.
+    if backend == "mistral":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=os.environ.get("MISTRAL_TEXT_MODEL", "mistral-small-latest"),
+            api_key=_require("MISTRAL_API_KEY", "mistral"),
+            base_url=MISTRAL_BASE_URL,
+            temperature=0.3,
+            streaming=streaming,
+            max_retries=0,
+            timeout=25,
+        )
+
+    if backend == "mistral-vision":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=os.environ.get("MISTRAL_VISION_MODEL", "pixtral-12b-2409"),
+            api_key=_require("MISTRAL_API_KEY", "mistral"),
+            base_url=MISTRAL_BASE_URL,
+            temperature=0.2,
+            max_retries=0,
+            timeout=25,
+        )
+
+    if backend == "openrouter":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct"),
+            api_key=_require("OPENROUTER_API_KEY", "openrouter"),
+            base_url=OPENROUTER_BASE_URL,
+            temperature=0.3,
+            streaming=streaming,
+            max_retries=0,
+            timeout=25,
+        )
+
     if backend == "ollama":
         from langchain_ollama import ChatOllama
 
@@ -151,6 +195,27 @@ def get_fallback_text_model() -> BaseChatModel | None:
 def get_vision_model() -> BaseChatModel:
     """Deliberately a *different* model from the text path."""
     return build_text_model(os.environ.get("CALORAI_VISION_BACKEND", "mock"))
+
+
+@lru_cache(maxsize=2)
+def get_fallback_vision_model() -> BaseChatModel | None:
+    """Second vision provider, for when the first is throttled.
+
+    This is not belt-and-braces. Measured over 10 photos on Gemini's free tier
+    the image path had a p50 of 5.8s but a p95 of 25.1s -- and that p95 is the
+    client timeout firing on rate-limited calls, not slow inference. A second
+    provider converts the worst case from "waited 25 seconds and got nothing"
+    into "answered by the other model".
+    """
+    name = os.environ.get("CALORAI_VISION_FALLBACK", "").strip()
+    if not name or name.lower() == "none":
+        return None
+    if name.lower() == os.environ.get("CALORAI_VISION_BACKEND", "mock").lower():
+        return None
+    try:
+        return build_text_model(name)
+    except BackendUnavailable:
+        return None
 
 
 def active_backends() -> dict[str, str]:

@@ -232,13 +232,27 @@ def analyse_plate(
         ]
     )
 
-    try:
-        structured = model.with_structured_output(PlateAnalysis)
-        result = structured.invoke([message])
-        analysis = (
-            result if isinstance(result, PlateAnalysis) else PlateAnalysis(**dict(result))
-        )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
-        return PlateAnalysis(failed=True, failure_reason=f"vision model error: {exc}")
+    from .llm import get_fallback_vision_model
 
-    return apply_caption_multiplier(analysis, caption)
+    # Try the primary, then a second provider if there is one. Both are given a
+    # short timeout rather than a long retry: measured, the worst case on a
+    # throttled free tier was the client sitting on a 429 until it timed out,
+    # which is 25 seconds of nothing. Swapping providers is faster than waiting.
+    candidates = [model]
+    backup = get_fallback_vision_model()
+    if backup is not None:
+        candidates.append(backup)
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            structured = candidate.with_structured_output(PlateAnalysis)
+            result = structured.invoke([message])
+            analysis = (
+                result if isinstance(result, PlateAnalysis) else PlateAnalysis(**dict(result))
+            )
+            return apply_caption_multiplier(analysis, caption)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
+            last_error = exc
+
+    return PlateAnalysis(failed=True, failure_reason=f"vision model error: {last_error}")
