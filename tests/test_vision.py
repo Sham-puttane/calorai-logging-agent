@@ -175,3 +175,51 @@ def test_photos_are_downscaled_before_upload():
 def test_downscaling_is_optional_not_required():
     """Pillow is an optimisation. Without it the original bytes still send."""
     assert vision._downscale(Path("does/not/exist.jpg")) is None
+
+
+# ---------------------------------------------------------------------------
+# failure messages -- blame the right thing
+# ---------------------------------------------------------------------------
+def test_a_rate_limit_does_not_get_blamed_on_the_photo():
+    """Observed live: a perfectly readable plate of paneer came back as "I
+    couldn't read that photo clearly" because both vision providers were
+    throttled. That sends the user off to check an image that was fine."""
+    analysis = PlateAnalysis(
+        failed=True,
+        failure_reason="vision model error: Error code: 429 RESOURCE_EXHAUSTED",
+    )
+    question = analysis.clarifying_question()
+    assert "rate limited" in question
+    assert "read that photo" not in question
+
+
+def test_a_missing_file_says_so():
+    analysis = PlateAnalysis(failed=True, failure_reason="no image at nope.jpg")
+    assert "couldn't open that file" in analysis.clarifying_question()
+
+
+def test_an_unexplained_failure_still_asks_for_the_food():
+    analysis = PlateAnalysis(failed=True, failure_reason="something odd")
+    question = analysis.clarifying_question()
+    assert question.endswith("?")
+    assert "on the plate" in question
+
+
+@pytest.mark.parametrize(
+    "message,throttled",
+    [
+        ("Error code: 429 - rate_limit_exceeded", True),
+        ("RESOURCE_EXHAUSTED quota", True),
+        ("Rate limit exceeded", True),
+        ("no image at nope.jpg", False),
+        ("Invalid API Key", False),
+        ("connection reset", False),
+    ],
+)
+def test_throttle_detection(message, throttled):
+    """Only throttling earns a retry -- never a bad file or a bad key."""
+    assert vision._is_throttle(RuntimeError(message)) is throttled
+
+
+def test_no_exception_is_not_a_throttle():
+    assert vision._is_throttle(None) is False

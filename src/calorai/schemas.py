@@ -96,7 +96,21 @@ class PlateAnalysis(BaseModel):
     def clarifying_question(self) -> str | None:
         """One consolidated question, never a checklist."""
         if self.failed:
-            return "I couldn't read that photo clearly -- what was on the plate?"
+            # Blaming the photo for a rate limit is a lie that sends the user
+            # off to check their picture when the picture was fine. Observed
+            # live: a perfectly readable plate of paneer came back as "I
+            # couldn't read that photo clearly" because both vision providers
+            # were throttled at that moment.
+            reason = (self.failure_reason or "").lower()
+            if any(k in reason for k in ("429", "rate", "quota", "resource_exhausted")):
+                return (
+                    "i'm rate limited on photos right now, so i couldn't look at "
+                    "that one -- try again in a moment, or just tell me what was "
+                    "on the plate?"
+                )
+            if "no image at" in reason or "limit is" in reason:
+                return "i couldn't open that file -- what was on the plate?"
+            return "i couldn't make that photo out -- what was on the plate?"
         if not self.items:
             return "I couldn't make out any food in that one. What was it?"
         unknown = self.unidentified()

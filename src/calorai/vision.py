@@ -30,6 +30,7 @@ instead of a photo-meal plus a text-meal.
 from __future__ import annotations
 
 import base64
+import time
 import io
 import mimetypes
 from pathlib import Path
@@ -39,6 +40,18 @@ from langchain_core.messages import HumanMessage
 from .schemas import DetectedItem, PlateAnalysis
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+#: One short wait before retrying a throttled vision call. A photo is an act
+#: the user just performed and cannot cheaply repeat, unlike a text turn.
+RETRY_PAUSE_S = 2.0
+
+
+def _is_throttle(exc: Exception | None) -> bool:
+    if exc is None:
+        return False
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(k in text for k in ("429", "rate", "quota", "resource_exhausted"))
+
 
 _PROMPT = """\
 You are a dietitian reading a photo of one person's meal. Work in household \
@@ -244,7 +257,7 @@ def analyse_plate(
         candidates.append(backup)
 
     last_error: Exception | None = None
-    for candidate in candidates:
+    for attempt, candidate in enumerate(candidates):
         try:
             structured = candidate.with_structured_output(PlateAnalysis)
             result = structured.invoke([message])
@@ -253,6 +266,26 @@ def analyse_plate(
             )
             return apply_caption_multiplier(analysis, caption)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
+            last_error = exc
+            # One short wait before the next provider, but only for throttling.
+            # Free vision tiers limit requests per second, and a photo is a
+            # deliberate act the user just performed -- unlike a text turn they
+            # can simply retype, so a second of patience is worth more here
+            # than failing instantly. Never retry a bad file or a bad key.
+            if attempt + 1 < len(candidates) and _is_throttle(exc):
+                time.sleep(RETRY_PAUSE_S)
+
+    # A throttled primary with no usable backup is worth one retry of its own,
+    # for the same reason.
+    if _is_throttle(last_error) and len(candidates) == 1:
+        time.sleep(RETRY_PAUSE_S)
+        try:
+            result = candidates[0].with_structured_output(PlateAnalysis).invoke([message])
+            analysis = (
+                result if isinstance(result, PlateAnalysis) else PlateAnalysis(**dict(result))
+            )
+            return apply_caption_multiplier(analysis, caption)
+        except Exception as exc:  # noqa: BLE001
             last_error = exc
 
     return PlateAnalysis(failed=True, failure_reason=f"vision model error: {last_error}")
