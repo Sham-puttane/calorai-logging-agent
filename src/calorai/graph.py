@@ -28,6 +28,7 @@ import time
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import (
+    AIMessageChunk,
     AIMessage,
     BaseMessage,
     HumanMessage,
@@ -494,6 +495,14 @@ def stream_turn(
             final = payload
             continue
         chunk = payload[0] if isinstance(payload, tuple) else payload
+
+        # Only the assistant's own words. "messages" mode also streams
+        # ToolMessages, whose content is the raw JSON a tool returned -- without
+        # this filter a log_meal result gets dumped on screen ahead of the
+        # sentence the user is meant to read.
+        if isinstance(chunk, ToolMessage) or not isinstance(chunk, (AIMessage, AIMessageChunk)):
+            continue
+
         piece = getattr(chunk, "content", "")
         if isinstance(piece, list):  # some providers emit content blocks
             piece = "".join(b.get("text", "") for b in piece if isinstance(b, dict))

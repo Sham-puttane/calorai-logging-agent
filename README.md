@@ -27,9 +27,13 @@ Python 3.12+.
 ```bash
 git clone <this repo> && cd calorai-agent
 python -m venv .venv && .venv/Scripts/activate     # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .                                   # editable install; puts src/ on the path
 cp .env.example .env
 ```
+
+`pip install -e .` rather than `pip install -r requirements.txt`, because this is a `src/` layout
+and without the install `python -m calorai.cli` fails with `ModuleNotFoundError`. (`requirements.txt`
+is still there and still accurate if you prefer it — you'll just need `PYTHONPATH=src`.)
 
 **The tests and evals run with no API keys at all** — they default to a deterministic offline
 backend. To verify the clone before configuring anything:

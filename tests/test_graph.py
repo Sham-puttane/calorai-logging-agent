@@ -365,3 +365,40 @@ def test_caption_fraction_halves_the_portions(conn):
 
     assert plain["plate_analysis"] is not None
     assert halved_kcal == pytest.approx(plain_kcal / 2, rel=0.02)
+
+
+# ===========================================================================
+# streaming
+# ===========================================================================
+def test_streaming_never_leaks_raw_tool_json(conn):
+    """LangGraph's "messages" stream mode emits ToolMessages too, whose content
+    is the JSON a tool returned. Without filtering, a log_meal result gets
+    dumped on screen ahead of the sentence the user is meant to read -- which
+    is exactly what happened the first time this was recorded."""
+    from calorai.graph import stream_turn
+
+    graph = build_graph(conn, USER, streaming=True)
+    tokens = [p for kind, p in stream_turn(conn, USER, "had 2 rotis", graph=graph) if kind == "token"]
+    streamed = "".join(tokens)
+
+    for leak in ('"ok":', '"meal_id"', '"totals_after"', '"item_id"'):
+        assert leak not in streamed, f"raw tool JSON leaked into the reply: {leak}"
+
+
+def test_streaming_and_blocking_agree_on_the_reply(conn):
+    from calorai.graph import stream_turn
+
+    graph = build_graph(conn, USER, streaming=True)
+    done = [p for kind, p in stream_turn(conn, USER, "had 2 rotis", graph=graph) if kind == "done"]
+
+    assert len(done) == 1
+    assert done[0]["tool_calls"] == ["log_meal"]
+    assert repo.daily_totals(conn, USER)["kcal"] == 210
+
+
+def test_streaming_reports_time_to_first_token(conn):
+    from calorai.graph import stream_turn
+
+    graph = build_graph(conn, USER, streaming=True)
+    result = [p for kind, p in stream_turn(conn, USER, "had 2 rotis", graph=graph) if kind == "done"][0]
+    assert result["ttft"] is not None and result["ttft"] >= 0
