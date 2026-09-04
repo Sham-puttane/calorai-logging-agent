@@ -494,22 +494,25 @@ finding out which assumptions were wrong.
 
 ## What I'd do next
 
-1. **Measure the image path** with real photos, and add image cases to the latency table.
-2. **Streaming.** The architecture supports it (`build_graph(streaming=True)`); the CLI doesn't use
-   it yet. Time-to-first-token is what a WhatsApp user actually feels — a 700 ms reply that starts
-   at 200 ms feels twice as fast.
-3. **Confirm-before-write on low-confidence photos.** A confident-enough plate logs straight away
+1. **Cut the image path below 3 s.** The vision call is ~6 s of the ~7 s total and I've only taken
+   the easy win (downscaling). The next lever is output size: the structured schema asks for two
+   confidences and an alternatives list per item, which is a lot of generated JSON. A tighter
+   schema, or a smaller image at 512 px, are both worth measuring — I ran out of free-tier quota
+   before I could.
+2. **Confirm-before-write on low-confidence photos.** A confident-enough plate logs straight away
    today; a one-tap "that right?" would catch vision errors before they enter the totals.
-4. **Prompt caching.** The system prompt and tool schemas are identical every call. With a provider
-   that supports caching that's most of the fixed cost gone — which on a TPM-limited tier converts
-   directly into more usable turns.
-5. **Better correction targeting.** `_find_recent_item` matches on normalised name overlap. Right
+3. **Prompt caching.** The system prompt and tool schemas are identical every call. Gemini 2.5+
+   does this implicitly and the preamble is already ordered to benefit, but explicit caching on a
+   paid tier would remove most of the fixed cost — which on a TPM-limited tier converts directly
+   into more usable turns.
+4. **Better correction targeting.** `_find_recent_item` matches on normalised name overlap. Right
    for the cases tested, but it would mis-target "the second one", or two similar foods in one
-   meal. It needs the transcript.
-6. **Alias inference per meal slot** — "my usual" should mean different things at 8am and 8pm. The
+   meal. It needs the transcript, which exists but isn't wired into prompts.
+5. **Alias inference per meal slot** — "my usual" should mean different things at 8am and 8pm. The
    data model supports it; the inference doesn't use it yet.
-7. **A larger, adversarial eval set**, scored against real models on a schedule rather than only
-   against the mock.
+6. **A larger, adversarial eval set**, scored against real models on a schedule rather than only
+   against the mock. The mock keeps the suite deterministic, but only real runs find the bugs that
+   actually shipped in this project.
 
 ---
 

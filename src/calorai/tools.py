@@ -43,7 +43,13 @@ class ItemArg(BaseModel):
     # minimum that still steers the model. This schema alone was 189 tokens
     # before trimming -- the most expensive of the six tools.
     name: str = Field(description="food, e.g. paratha")
-    qty: float = Field(default=1.0, description="amount, e.g. 2 or 0.67")
+    qty: float = Field(
+        default=1.0,
+        # Spelled out because the model was observed saying "2 parathas" in its
+        # reply while sending qty=1 in the call -- the summary was right and the
+        # data was wrong, which is the worst way to be wrong.
+        description="how many, copied from the user: '2 parathas' -> 2, 'two thirds' -> 0.67",
+    )
     unit: str = Field(default="serving", description="piece|katori|cup|glass|serving")
 
 
