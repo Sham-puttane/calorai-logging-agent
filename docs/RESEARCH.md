@@ -69,21 +69,58 @@ portions anyway, our nutrition table is keyed by household unit, and users say
 "two rotis", not "160 g of roti". Asking for grams forces a conversion the model is
 measurably bad at.
 
-## Model selection
+## Model selection — measured, not read off a docs page
 
-| Path | Choice | Reason |
+Final picks:
+
+| Path | Choice | Measured |
 |---|---|---|
-| Text / agent | Groq `openai/gpt-oss-20b` | ~1000 tok/s and documented as strong at function calling — the agent loop is tool-calling, so this is the axis that matters |
-| Vision | Gemini `gemini-3.5-flash-lite` | Fastest multimodal on a free tier with real image *understanding* |
-| Failover | Cerebras `llama-3.3-70b` | Groq free tier is 30 RPM; a 30-run benchmark trips it |
+| Text / agent | Groq `openai/gpt-oss-20b` | 230 ms warm; strong function calling, the axis the loop is graded on |
+| Vision | Mistral `pixtral-12b-2409` | ~5.7 s warm on a real plate, with a workable quota |
+| Vision failover | Gemini `gemini-2.5-flash-lite` | comparable quality, unworkable free quota |
+| Text failover | Gemini `gemini-2.5-flash-lite` | different provider, so a Groq 429 costs a swap not a wait |
 
-**Groq was rejected for vision on evidence.** Its vision offering was Llama 4 Scout,
-which is preview-only and was **deprecated on 17 June 2026** with a migration notice.
-Building the image path on a model with a retirement date is how a submission breaks
-between writing and review.
+**Four of my initial picks were wrong, and only running them showed it.**
 
-Note the "Nano Banana" Gemini models (`gemini-3.1-flash-image`) are image *generation* —
-wrong tool, easy to grab by mistake.
+### Vision: Pixtral vs Gemini, same photo, same prompt
+
+Both were handed the identical thali and the identical prompt:
+
+| | Pixtral 12B | Gemini 2.5-flash-lite |
+|---|---|---|
+| Dishes identified | naan, rice, curry, yogurt sauce, chutney, salad, water | naan, rice, dal, paneer curry, raita, salad |
+| Named a scale reference | yes — "dinner plate ~27cm" | yes — "dinner plate ~27cm" |
+| Offered alternatives | yes — curry → `[dal, gravy]` | yes — paneer curry → `[vegetable curry]` |
+| Warm latency | ~5.7 s | ~5.0 s |
+| Free-tier quota | workable | **exhausted by 10 benchmark photos** |
+
+Quality is a wash. Both do what the prompt asks, including the two things the research
+said to demand: name your ruler, surface alternatives rather than guessing silently.
+Gemini is marginally faster per call.
+
+**Pixtral wins on the axis that actually decides it: being callable.** Gemini's free tier
+allows so few images per model per day that one ten-photo benchmark exhausted it, which
+showed up as a p95 of 25.1 s that was entirely rate-limit timeout rather than inference.
+*A model you cannot call is not a fast model.* Gemini stays wired as failover, so the two
+providers cover each other's limits.
+
+### Rejected, with reasons
+
+- **Groq for vision.** Its vision offering was Llama 4 Scout, preview-only and
+  **deprecated on 17 June 2026** with a migration notice. An image path with a retirement
+  date breaks between being written and being read.
+- **`gemini-3.5-flash-lite`** — my first pick, straight from the docs. It is a *thinking*
+  model: 8.1 s warm, 20 s cold, and it rejects `thinking_budget=0`. Nineteen times slower
+  than its own older sibling for a job that is structured extraction, not reasoning.
+  **The newest model was the wrong model.**
+- **Cerebras** — the planned failover. Returns 402 Payment Required on every model its key
+  can see; the free tier is gone.
+- **Self-hosted `transformers`** — slower than the Ollama path, since raw PyTorch on CPU
+  trails llama.cpp's quantised kernels. And the deciding argument: p50 is already dominated
+  by network round-trip, so self-hosting swaps a 766 ms network call for a multi-second
+  local one.
+- **The "Nano Banana" Gemini models** (`gemini-3.1-flash-image`) are image *generation*.
+  Wrong tool, easy to grab by mistake.
 
 ## Deliberately not done
 

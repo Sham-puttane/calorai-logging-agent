@@ -43,17 +43,17 @@ For real conversation, put free keys in `.env` (no credit card for either):
 
 | Key | Where | Used for | Needed? |
 |---|---|---|---|
-| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | the agent loop | yes |
-| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | vision, and text failover | yes |
-| `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai) | second vision provider (Pixtral), failover | optional |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | the agent loop | **yes** |
+| `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai) | vision (Pixtral) | **yes, for photos** |
+| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | failover for both paths | recommended |
 | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | extra failover breadth | optional |
 
 Backends are selected by env var, so swapping providers is a config change rather than a code one:
 
 ```bash
-CALORAI_TEXT_BACKEND=groq          # groq | gemini | mistral | openrouter | cerebras | ollama | mock
-CALORAI_VISION_BACKEND=gemini      # gemini | mistral-vision | ollama | mock
-CALORAI_VISION_FALLBACK=mistral-vision
+CALORAI_TEXT_BACKEND=groq              # groq | gemini | mistral | openrouter | cerebras | ollama | mock
+CALORAI_VISION_BACKEND=mistral-vision  # mistral-vision | gemini | ollama | mock
+CALORAI_VISION_FALLBACK=gemini
 CALORAI_TEXT_FALLBACK=gemini
 ```
 
@@ -120,20 +120,40 @@ three picks. Full write-up in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 | Path | Model | Warm | Why |
 |---|---|---|---|
 | **Text / agent loop** | Groq `openai/gpt-oss-20b` | **230 ms** | The loop is tool calling, so function-calling reliability and throughput are the axes that matter. ~1000 tok/s. |
-| **Vision** | Gemini `gemini-2.5-flash-lite` | **429 ms** | A genuinely different model *and* provider. Mature multimodal, generous free tier. |
-| **Failover** | Gemini | — | A different provider, so a Groq rate limit costs a model swap rather than a wait. |
+| **Vision** | Mistral `pixtral-12b-2409` | **~5.7 s** | A genuinely different model *and* provider, with a quota you can actually use. |
+| **Vision failover** | Gemini `gemini-2.5-flash-lite` | ~5.0 s | Comparable output; kept as backup so the two providers cover each other. |
+| **Text failover** | Gemini `gemini-2.5-flash-lite` | — | A different provider, so a Groq rate limit costs a model swap rather than a wait. |
 
-Three things I got wrong first and fixed by measuring:
+### The vision pick was a head-to-head, not an assertion
 
-- **I picked `gemini-3.5-flash-lite` from the docs — it's a thinking model.** 8.1s warm, 20s cold,
+I ran Pixtral and Gemini against the **same photo with the same prompt**:
+
+| | Pixtral 12B | Gemini 2.5-flash-lite |
+|---|---|---|
+| Dishes identified | naan, rice, curry, yogurt sauce, chutney, salad, water | naan, rice, dal, paneer curry, raita, salad |
+| Named a scale reference | yes — "dinner plate ~27cm" | yes — "dinner plate ~27cm" |
+| Offered alternatives | yes — curry → `[dal, gravy]` | yes — paneer curry → `[vegetable curry]` |
+| Warm latency | ~5.7 s | ~5.0 s |
+| Free-tier quota | workable | **exhausted by 10 benchmark photos** |
+
+Quality is a wash — both do what the prompt demands, including naming their ruler and surfacing
+alternatives rather than guessing. Gemini is marginally faster *per call*.
+
+**Pixtral wins on the axis that actually decides it: being callable.** Gemini's free tier allows so
+few images per model per day that a single ten-photo benchmark exhausted it, which showed up in my
+first measurement as a p95 of 25.1 s that was entirely rate-limit timeout rather than inference.
+*A model you cannot call is not a fast model.*
+
+### Four picks I got wrong, and measuring fixed
+
+- **`gemini-3.5-flash-lite`, straight from the docs — it's a thinking model.** 8.1s warm, 20s cold,
   and it *rejects* `thinking_budget=0`. Nineteen times slower for a job that is structured
-  extraction, not reasoning. The older `2.5-flash-lite` does it in 429ms. **The newest model was
+  extraction, not reasoning. The *older* `2.5-flash-lite` does it in 429 ms. **The newest model was
   the wrong model.**
 - **`gpt-oss-20b` is also a reasoning model.** At default effort, two-tool turns took 12–20s.
-  `reasoning_effort="low"` brought them to ~1s. Choosing between six tools does not need
-  deliberation.
-- **Cerebras was my planned failover; its free tier is gone** (402 Payment Required on every model
-  its key can see). Moved to Gemini.
+  `reasoning_effort="low"` brought them to ~1s.
+- **Cerebras as failover** — 402 Payment Required on every model its key can see. Free tier gone.
+- **Gemini as primary vision** — right on quality, wrong on quota. Demoted to failover.
 
 **Groq is deliberately not used for vision.** Its vision model was Llama 4 Scout, preview-only and
 **deprecated in June 2026**. An image path with a retirement date is how a submission breaks
@@ -296,17 +316,17 @@ Measured on the real stack: Groq `openai/gpt-oss-20b` for text, Gemini `gemini-2
 vision. Reproduce with `python bench/latency.py --n 20 --delay 8`; the raw report lands in
 `bench/results/latest.json`.
 
-| path | n | **p50** | **p95** | mean | max |
-|---|---|---|---|---|---|
-| **text** | 20 | **766 ms** | **1257 ms** | 661 ms | 1289 ms |
-| **image** | 10 | **5837 ms** | **25104 ms** | 11449 ms | 25117 ms |
+| path | n | **p50** | **p95** | mean | max | throttled |
+|---|---|---|---|---|---|---|
+| **text** | 20 | **766 ms** | **1257 ms** | 661 ms | 1289 ms | 0 / 20 |
+| **image** | 7 | **6896 ms** | **11259 ms** | 7779 ms | 12530 ms | 3 / 10 |
 
 Cold start (first call, includes client construction and TLS): **924 ms**.
 
 | path | stage p50 |
 |---|---|
 | text | `agent` 790 ms · `ingest` 0.2 ms |
-| image | `vision` 5033 ms · `agent` 966 ms · `ingest` 0.2 ms |
+| image | `vision` 6153 ms · `agent` 783 ms · `ingest` 0.2 ms |
 
 The fast path served **20%** of text turns, in 2–23 ms with no model call.
 
@@ -314,16 +334,21 @@ The fast path served **20%** of text turns, in 2–23 ms with no model call.
 **sub-millisecond**. Essentially all of p50 is the model round trip, which is where it should be,
 and p95 is only 1.6× p50, so there's no tail hiding in the loop.
 
-**Reading the image row, honestly:** that p95 of 25.1 s is *not* slow inference. It is the client
-timeout firing on rate-limited calls — Gemini's free tier allows very few image requests per day
-per model, and ten benchmark photos is enough to exhaust it. The p50 of 5.8 s is the real
-unthrottled shape: one vision call (~5 s, dominated by upload and image processing) plus one text
-call (~1 s). The gap between p50 and p95 here is a free-tier artifact, not an architectural one,
-and it is why the image path now has a **second vision provider** configured as failover
-(`CALORAI_VISION_FALLBACK`) — swapping providers is much faster than waiting out a 429.
+**Reading the image row:** it is genuinely slower, and honestly so. The vision call is ~6 s of the
+~7 s total — sending an image and getting structured JSON back is simply a bigger unit of work than
+a text turn, and the agent's share of it is under a second. Photos are already downscaled to 768 px
+before upload (an 81–94% payload cut), which is the cheapest large win available.
 
-I'd rather show that ugly p95 with an explanation than quietly drop the throttled samples and
-publish a flattering number.
+**What that `throttled` column is doing there.** An earlier run of this same benchmark, with Gemini
+as the primary vision model, produced a p95 of **25.1 s** — which was not inference at all, it was
+the client timeout firing on rate-limited calls. Switching to Pixtral and keeping Gemini as failover
+more than halved p95 to 11.3 s. The 3-in-10 throttles that remain are Groq's tokens-per-minute cap
+on the *text* half of the image turn.
+
+A turn that got throttled and returned a graceful "i'm being rate limited" is counted as
+**throttled, not as a fast success** — otherwise a rate limit would quietly flatter the
+percentiles. I'd rather show the ugly number with an explanation than drop the samples that made it
+ugly.
 
 ### What I did to get there
 

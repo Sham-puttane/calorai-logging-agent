@@ -233,10 +233,12 @@ def main() -> int:
     if text_samples:
         print(f"\nfast path handled {report['paths'][0]['fast_path_share']:.0%} of text turns")
     if text_throttled or image_throttled:
-        total = args.n + (len(image_samples) + image_throttled)
+        attempted = (
+            len(text_samples) + text_throttled + len(image_samples) + image_throttled
+        )
         print(
             f"throttled: text {text_throttled}, image {image_throttled} "
-            f"of {total} attempts -- free-tier tokens-per-minute limit, "
+            f"of {attempted} attempts -- free-tier tokens-per-minute limit, "
             f"not agent latency"
         )
 

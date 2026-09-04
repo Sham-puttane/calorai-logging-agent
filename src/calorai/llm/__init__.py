@@ -6,15 +6,21 @@ from a docs page -- see docs/RESEARCH.md for the numbers.
 * **text / agent loop** -- Groq `openai/gpt-oss-20b`, 230 ms warm. The loop is
   tool calling, so function-calling reliability and throughput are the axes
   that matter.
-* **vision** -- Gemini `gemini-2.5-flash-lite`, 429 ms warm. Note the version
-  is *older* than the flagship on purpose: `gemini-3.5-flash-lite` is a
-  thinking model that measured 8.1 s warm and 20 s cold, and it rejects
+* **vision** -- Mistral `pixtral-12b-2409`. Chosen over Gemini after running
+  both against the same photo: comparable output (both named the dishes,
+  reported a scale reference and offered alternatives) but a workable quota.
+  Gemini's free tier allows so few images per model per day that ten benchmark
+  photos exhausted it, which showed up as a p95 of 25 s that was pure rate-limit
+  timeout. A model you cannot call is not a fast model.
+* **vision failover** -- Gemini `gemini-2.5-flash-lite`. Note the version is
+  *older* than the flagship on purpose: `gemini-3.5-flash-lite` is a thinking
+  model that measured 8.1 s warm and 20 s cold, and it rejects
   `thinking_budget=0`. Nineteen times slower for a job that is structured
   extraction, not reasoning.
-* **failover** -- Gemini, because it is a genuinely different provider. It was
-  Cerebras until Cerebras returned 402 Payment Required on every model its key
-  could see. Failover matters here because Groq's free tier is 30 rpm and the
-  latency benchmark issues 30 requests inside a minute.
+* **text failover** -- Gemini, because it is a genuinely different provider. It
+  was Cerebras until Cerebras returned 402 Payment Required on every model its
+  key could see. Failover matters here because Groq's free tier caps tokens per
+  minute and this agent reaches it in about two turns.
 
 Groq was rejected for vision on evidence: its vision model was Llama 4 Scout,
 preview-only and deprecated in June 2026.
@@ -122,7 +128,7 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=os.environ.get("MISTRAL_TEXT_MODEL", "mistral-small-latest"),
+            model=os.environ.get("MISTRAL_TEXT_MODEL", "open-mistral-7b"),
             api_key=_require("MISTRAL_API_KEY", "mistral"),
             base_url=MISTRAL_BASE_URL,
             temperature=0.3,
@@ -228,6 +234,9 @@ def active_backends() -> dict[str, str]:
         "groq": os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-20b"),
         "cerebras": os.environ.get("CEREBRAS_TEXT_MODEL", "llama-3.3-70b"),
         "gemini": os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash-lite"),
+        "mistral": os.environ.get("MISTRAL_TEXT_MODEL", "open-mistral-7b"),
+        "mistral-vision": os.environ.get("MISTRAL_VISION_MODEL", "pixtral-12b-2409"),
+        "openrouter": os.environ.get("OPENROUTER_MODEL", "?"),
         "ollama": os.environ.get("OLLAMA_TEXT_MODEL", "qwen2.5:3b"),
         "mock": "rule-based stub",
     }
