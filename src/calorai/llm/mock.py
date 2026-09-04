@@ -18,7 +18,13 @@ from typing import Any, Sequence
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from ..nutrition import _index, normalize
@@ -48,6 +54,12 @@ _TOTALS_RE = re.compile(
     re.I,
 )
 _YESTERDAY_RE = re.compile(r"\b(same as (?:yesterday|last night)|like yesterday)\b", re.I)
+# Matches the lines _describe_plate renders: "- 1 katori rice (portion uncertain...)"
+_PLATE_ITEM_RE = re.compile(
+    r"^-\s*(\d+(?:\.\d+)?)\s+(\S+)\s+([a-z][a-z ]*?)\s*(?:\(portion uncertain[^)]*\))?\s*$",
+    re.M,
+)
+
 _SKIPPED_RE = re.compile(r"\b(grazed|grazing|snacked|picked at|nibbled)\b", re.I)
 
 
@@ -174,6 +186,16 @@ class MockChatModel(BaseChatModel):
         text = str(human.content) if human else ""
         low = text.lower()
 
+        # A photo that made it past the confidence gate: the vision handoff is
+        # already in context, so log exactly those items in ONE call. This is
+        # the branch that keeps a photo plus its caption from becoming two
+        # meals -- there is no separate log for the caption text.
+        plate = self._plate_items(messages)
+        if plate:
+            return self._call(
+                "log_meal", {"items": plate, "slot": "", "note": "from photo"}
+            )
+
         if _TOTALS_RE.search(low):
             return self._call("get_daily_totals", {"day": "today"})
 
@@ -228,6 +250,23 @@ class MockChatModel(BaseChatModel):
         # and is picked up by the memory extractor, not by a tool.
         return AIMessage(content="Got it.")
 
+    def _plate_items(self, messages: list[BaseMessage]) -> list[dict[str, Any]]:
+        """Read the vision handoff back out of context.
+
+        A real model reads these lines from the prompt and decides to log them;
+        the mock parses the same lines. Keeping it to the rendered text rather
+        than a side channel means the mock exercises the same handoff the real
+        model does.
+        """
+        for message in reversed(messages):
+            content = str(getattr(message, "content", ""))
+            if isinstance(message, SystemMessage) and content.startswith("[photo analysed"):
+                return [
+                    {"name": name.strip(), "qty": float(qty), "unit": unit}
+                    for qty, unit, name in _PLATE_ITEM_RE.findall(content)
+                ]
+        return []
+
     def _call(self, name: str, args: dict[str, Any]) -> AIMessage:
         return AIMessage(
             content="",
@@ -235,7 +274,56 @@ class MockChatModel(BaseChatModel):
         )
 
     def _summarise(self, result: ToolMessage) -> str:
-        text = str(result.content)
-        if '"kcal"' in text and '"items_logged"' in text:
-            return f"Here's where you're at: {text}"
-        return f"Done. {text[:240]}"
+        """Phrase the tool result the way the real model is asked to.
+
+        A real model writes this sentence; the mock templates it. Keeping the
+        shape close means eval assertions about phrasing stay meaningful and
+        the offline demo does not read like a debug dump.
+        """
+        import json
+
+        try:
+            data = json.loads(str(result.content))
+        except (json.JSONDecodeError, TypeError):
+            return "done."
+
+        if not data.get("ok", True):
+            return f"hmm, {data.get('error', 'I could not do that')} -- want to tell me again?"
+
+        if "changed" in data:  # correct_meal
+            change = data["changed"]
+            totals = data.get("totals_after", {})
+            return (
+                f"fixed -- {change['from']} is now {change['to']}. "
+                f"that puts you at {totals.get('kcal', 0)} cal today."
+            )
+
+        if "removed" in data:
+            return f"removed {data['removed']}. now at {data['totals_after']['kcal']} cal today."
+
+        if "items" in data and "meal_kcal" in data:  # log_meal
+            items = ", ".join(f"{i['qty']:g} {i['unit']} {i['name']}" for i in data["items"])
+            reply = f"logged {items} -- about {data['meal_kcal']} cal."
+            if data.get("unknown_foods"):
+                reply += f" (i don't know {data['unknown_foods'][0]}, so it's counted as 0)"
+            reply += f" you're at {data['totals_after']['kcal']} cal today."
+            return reply
+
+        if "meals" in data:  # find_meals
+            if not data["meals"]:
+                return "i couldn't find that one -- what did you have?"
+            items = ", ".join(f"{m['qty']:g} {m['unit']} {m['name']}" for m in data["meals"])
+            return f"that was {items}."
+
+        if "kcal" in data and "items_logged" in data:  # get_daily_totals
+            if not data["items_logged"]:
+                return "nothing logged yet today -- what have you had?"
+            return (
+                f"{data['kcal']} cal so far today -- {data['protein_g']:g}g protein, "
+                f"{data['carbs_g']:g}g carbs, {data['fat_g']:g}g fat."
+            )
+
+        if "food" in data:  # lookup_nutrition
+            return f"{data['qty']:g} {data['unit']} of {data['food']} is about {data['kcal']} cal."
+
+        return "done."
