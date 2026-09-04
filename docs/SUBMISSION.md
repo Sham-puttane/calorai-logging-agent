@@ -100,9 +100,9 @@ before sending.
 
 The README says all of this, but worth having it in your head on camera:
 
-- **The image path is slow** — p50 6.9 s, and the vision call is ~6 s of it. Downscaling
-  was the easy win; a tighter output schema and a 512 px image are the next ones and I
-  ran out of free-tier quota before measuring them.
+- **The image path is slow** — p50 6.1 s, and the vision call is ~6 s of it. Resolution is
+  tuned (512 px, A/B'd against 768 and 384); the next lever is a tighter output schema,
+  since latency tracks generated JSON more than image size.
 - **Free-tier rate limits are the binding constraint**, not the agent. Text p50 is 766 ms
   and the agent's own overhead is sub-millisecond.
 - **The transcript table is written but not injected into prompts**, so cross-turn

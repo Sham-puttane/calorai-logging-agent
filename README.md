@@ -207,7 +207,7 @@ what I consciously didn't:
 |---|---|
 | **Inference avoidance** (semantic caching) | **Adopted**, in its cheapest form — the deterministic fast path answers totals questions with zero model calls, and the nutrition cache means a repeat food never costs an estimation call. |
 | **Reducing prompt tokens** | **Adopted.** Dropping tool schemas from the reply call, trimming field descriptions, moving `note` out of the schema. 36% off a two-round turn. |
-| **Payload reduction** | **Adopted.** Downscaling photos to 768 px cut uploads by 81–94%. |
+| **Payload reduction** | **Adopted, then tuned.** Photos go out at 512 px — A/B'd at four calls each, median 4601 ms against 768 px's 6549 ms. 384 px was *slower*, which is the tell that latency tracks generated tokens rather than image size. |
 | **Implicit prefix caching** | **Adopted passively.** Gemini 2.5+ caches repeated prefixes automatically on the free tier, so the static system prompt is deliberately placed *first* in the preamble and the per-user memory block after it, which keeps the longest possible prefix stable across turns. |
 | **Streaming** | **Adopted.** Doesn't reduce total time, but TTFT is what a person waiting on a message feels. |
 | **Speculative tool calling** — a draft model predicting the next tool so execution overlaps generation | **Deferred.** The literature reports 2–5× on long tool chains, but this agent's turns are 1–2 tool calls, so there's very little sequential bottleneck to hide. It would add a second model call per turn to a system whose binding constraint is tokens per minute. Wrong optimisation for this shape of workload. |
@@ -402,9 +402,10 @@ The fast path served **20%** of text turns, in 2–23 ms with no model call.
 and p95 is only 1.6× p50, so there's no tail hiding in the loop.
 
 **Reading the image row:** it is genuinely slower, and honestly so. The vision call is ~6 s of the
-~7 s total — sending an image and getting structured JSON back is simply a bigger unit of work than
-a text turn, and the agent's share of it is under a second. Photos are already downscaled to 768 px
-before upload (an 81–94% payload cut), which is the cheapest large win available.
+~6.5 s total — sending an image and getting structured JSON back is a bigger unit of work than a
+text turn, and the agent's share is under a second. Resolution is tuned (512 px, measured against
+768 and 384); the next lever is a tighter output schema, because latency here tracks the JSON the
+model generates more than the picture it is sent.
 
 **What that `throttled` column is doing there.** An earlier run of this same benchmark, with Gemini
 as the primary vision model, produced a p95 of **25.1 s** — which was not inference at all, it was
