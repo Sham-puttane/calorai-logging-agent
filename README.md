@@ -121,6 +121,32 @@ Three things I got wrong first and fixed by measuring:
 **deprecated in June 2026**. An image path with a retirement date is how a submission breaks
 between being written and being read.
 
+### Considered and rejected
+
+| Option | Why not |
+|---|---|
+| **Self-hosted `transformers`** | Slower than the Ollama path below — raw PyTorch on CPU is well behind llama.cpp's quantised kernels. And the deciding argument: p50 is already **dominated by network round-trip**, so self-hosting swaps a 766 ms network call for a multi-second local one. Wrong direction. |
+| **Ollama (local GGUF)** | Ships as a real backend for the zero-key path, but measured infeasible here — see below. |
+| **One model for both paths** | Would satisfy nothing the brief asks for, and the right model genuinely differs: the text path is graded on tool-calling reliability, the vision path on image understanding. |
+| **`gemini-3.5-flash-lite`** | My first pick. Measured 8.1 s. See above. |
+| **Cerebras** | 402 Payment Required — free tier gone. |
+| **Groq for vision** | Deprecated vision model. |
+
+### Optimisation techniques considered
+
+I read around agent-latency work before optimising rather than guessing at it. What I adopted, and
+what I consciously didn't:
+
+| Technique | Verdict |
+|---|---|
+| **Inference avoidance** (semantic caching) | **Adopted**, in its cheapest form — the deterministic fast path answers totals questions with zero model calls, and the nutrition cache means a repeat food never costs an estimation call. |
+| **Reducing prompt tokens** | **Adopted.** Dropping tool schemas from the reply call, trimming field descriptions, moving `note` out of the schema. 36% off a two-round turn. |
+| **Payload reduction** | **Adopted.** Downscaling photos to 768 px cut uploads by 81–94%. |
+| **Implicit prefix caching** | **Adopted passively.** Gemini 2.5+ caches repeated prefixes automatically on the free tier, so the static system prompt is deliberately placed *first* in the preamble and the per-user memory block after it, which keeps the longest possible prefix stable across turns. |
+| **Streaming** | **Adopted.** Doesn't reduce total time, but TTFT is what a person waiting on a message feels. |
+| **Speculative tool calling** — a draft model predicting the next tool so execution overlaps generation | **Deferred.** The literature reports 2–5× on long tool chains, but this agent's turns are 1–2 tool calls, so there's very little sequential bottleneck to hide. It would add a second model call per turn to a system whose binding constraint is tokens per minute. Wrong optimisation for this shape of workload. |
+| **Explicit context caching** | **Deferred.** Guarantees the discount but adds a storage meter that needs a paid account, and the literature is clear that cache creation only pays off if the prefix is reused enough. Implicit caching gets most of it for free. |
+
 ### Why the vision prompt looks the way it does
 
 I spent ~25 minutes on the food-image estimation literature before writing it, and it changed four

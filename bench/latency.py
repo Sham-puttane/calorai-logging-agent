@@ -140,6 +140,9 @@ def main() -> int:
     parser.add_argument("--no-fast-path", action="store_true")
     parser.add_argument("--out", default="bench/results/latest.json")
     parser.add_argument("--skip-image", action="store_true")
+    parser.add_argument("--skip-text", action="store_true")
+    parser.add_argument("--image-n", type=int, default=None,
+                        help="image samples (default: n//3)")
     parser.add_argument("--delay", type=float, default=0.0,
                         help="seconds between turns; free tiers cap tokens per minute")
     args = parser.parse_args()
@@ -173,10 +176,15 @@ def main() -> int:
     warmup_ms = (time.perf_counter() - warm_started) * 1000
     print(f"warmup (first call, includes connection setup): {warmup_ms:.0f} ms\n")
 
-    print("text path")
-    text_samples, text_throttled = run_path(
-        conn, graph, args.n, None, TEXT_MESSAGES, delay=args.delay
-    )
+    text_samples: list[dict] = []
+    text_throttled = 0
+    if args.skip_text:
+        print("text path skipped")
+    else:
+        print("text path")
+        text_samples, text_throttled = run_path(
+            conn, graph, args.n, None, TEXT_MESSAGES, delay=args.delay
+        )
 
     image_samples: list[dict] = []
     image_throttled = 0
@@ -187,7 +195,7 @@ def main() -> int:
         print(f"\nimage path skipped -- no file at {image_path}")
     else:
         print("\nimage path")
-        n_image = max(1, args.n // 3)
+        n_image = args.image_n or max(1, args.n // 3)
         image_samples, image_throttled = run_path(
             conn, graph, n_image, str(image_path), IMAGE_CAPTIONS, delay=args.delay
         )
@@ -199,8 +207,10 @@ def main() -> int:
         "mock": is_mock,
         "delay_s": args.delay,
         "throttled": {"text": text_throttled, "image": image_throttled},
-        "paths": [summarise("text", text_samples)],
+        "paths": [],
     }
+    if text_samples:
+        report["paths"].append(summarise("text", text_samples))
     if image_samples:
         report["paths"].append(summarise("image", image_samples))
 

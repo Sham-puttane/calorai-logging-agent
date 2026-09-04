@@ -27,7 +27,7 @@ from langchain_core.messages import (
 )
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from ..nutrition import _index, normalize
+from ..nutrition import _index
 
 # --- surface parsing ---------------------------------------------------------
 _WORD_QTY: dict[str, float] = {
@@ -46,7 +46,6 @@ _SLOTS = ("breakfast", "lunch", "dinner", "snack")
 _CORRECTION_RE = re.compile(
     r"\b(actually|sorry|i meant|make (?:that|it)|no,|not \d)\b", re.I
 )
-_QTY_FIX_RE = re.compile(r"\b(?:that was|make it|it was)?\s*(\d+(?:\.\d+)?)\b", re.I)
 _NOT_QTY_RE = re.compile(r"\bnot\s+(\d+(?:\.\d+)?)\b", re.I)
 _TOTALS_RE = re.compile(
     r"\b(how (?:am i|much|many)|what.{0,12}(?:total|calorie|protein|carb|fat)"
