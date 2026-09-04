@@ -180,7 +180,7 @@ pytest tests/ -q
 python evals/run_evals.py
 ```
 
-> "53 tests, 19 eval cases, and both run on a clean clone with no API keys because there's a
+> "83 tests, 19 eval cases, and both run on a clean clone with no API keys because there's a
 > deterministic offline backend. The eval scores four axes per case, and the load-bearing one is
 > the live row count — a correction done with the wrong tool still produces plausible calories, and
 > only the row count catches it."

@@ -35,7 +35,7 @@ cp .env.example .env
 backend. To verify the clone before configuring anything:
 
 ```bash
-pytest tests/ -q                 # 53 tests
+pytest tests/ -q                 # 83 tests
 python evals/run_evals.py        # 19 cases, 69 assertions
 ```
 
@@ -401,7 +401,7 @@ things this project cares most about. Reported rather than quietly dropped.
 ## Testing and evals
 
 ```bash
-pytest tests/ -q                             # 53 tests
+pytest tests/ -q                             # 83 tests
 python evals/run_evals.py                    # 19 cases, 69 assertions
 python evals/run_evals.py --no-fast-path     # same, with the short-circuit off
 python evals/run_evals.py --backend groq     # score a real model

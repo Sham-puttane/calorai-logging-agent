@@ -124,10 +124,20 @@ def make_tools(
         new_qty: float | None = None,
         new_name: str = "",
         new_unit: str = "",
+        scale_whole_meal: float | None = None,
     ) -> str:
-        """Fix something already logged ('actually that was 3 rotis not 2').
-        Updates in place, so nothing is double counted. Empty target_hint means
-        the most recent item."""
+        """Fix something already logged. Updates in place, never double counts.
+
+        One food: 'actually that was 3 rotis not 2' -> target_hint='roti',
+        new_qty=3. Empty target_hint means the most recent item.
+
+        The WHOLE last meal at once: 'half of that was my brother's',
+        'only ate a third' -> scale_whole_meal=0.5 or 0.33. Use this whenever a
+        share applies to everything on the plate, not one dish."""
+        if scale_whole_meal is not None:
+            return _dump(
+                repo.scale_meal(conn, user_id, scale_whole_meal, target_hint=target_hint)
+            )
         return _dump(
             repo.correct_meal(
                 conn, user_id, target_hint=target_hint,

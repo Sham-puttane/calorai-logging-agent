@@ -194,19 +194,97 @@ def correct_meal(
     }
 
 
+def _meal_items(conn: sqlite3.Connection, meal_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM meal_items WHERE meal_id = ? AND deleted_at IS NULL", (meal_id,)
+    ).fetchall()
+
+
 def delete_meal(
     conn: sqlite3.Connection, user_id: str, target_hint: str = ""
 ) -> dict[str, Any]:
-    """Soft delete: the row stays for audit, the sum stops counting it."""
+    """Soft delete: rows stay for audit, the sum stops counting them.
+
+    Scope follows the hint, which is what people actually mean:
+
+    * no hint -- "scratch that" -- removes the whole most recent MEAL. A photo
+      logs seven items in one meal, and removing one of them because the user
+      said "scratch that" would silently leave the other six on their day. This
+      was a real bug: delete_meal("") on a five-item meal removed one item and
+      left 705 of 755 calories logged.
+    * a named food -- "I didn't have the chai" -- removes just that item.
+    """
     row = _find_recent_item(conn, user_id, target_hint)
     if row is None:
         return {"ok": False, "error": f"nothing matching '{target_hint}' to remove"}
-    conn.execute("UPDATE meal_items SET deleted_at = ? WHERE id = ?", (utcnow(), row["id"]))
-    log_edit(conn, user_id, row["id"], "delete", dict(row), None, target_hint)
+
+    rows = [row] if target_hint.strip() else _meal_items(conn, row["meal_id"])
+    now = utcnow()
+    for item in rows:
+        conn.execute("UPDATE meal_items SET deleted_at = ? WHERE id = ?", (now, item["id"]))
+        log_edit(conn, user_id, item["id"], "delete", dict(item), None, target_hint)
+    # If nothing live is left, mark the parent meal too. Otherwise
+    # meals.deleted_at is a column that is never written -- dead schema that
+    # makes a reader wonder what they are missing.
+    if not _meal_items(conn, row["meal_id"]):
+        conn.execute("UPDATE meals SET deleted_at = ? WHERE id = ?", (now, row["meal_id"]))
     conn.commit()
+
+    removed = ", ".join(f"{i['qty']:g} {i['unit']} {i['name']}" for i in rows)
     return {
         "ok": True,
-        "removed": f"{row['qty']:g} {row['unit']} {row['name']} ({round(row['kcal'])} kcal)",
+        "removed": removed,
+        "items_removed": len(rows),
+        "kcal_removed": round(sum(i["kcal"] for i in rows)),
+        "totals_after": daily_totals(conn, user_id, row["local_date"]),
+    }
+
+
+def scale_meal(
+    conn: sqlite3.Connection, user_id: str, factor: float, target_hint: str = ""
+) -> dict[str, Any]:
+    """Multiply every item in the most recent matching meal by `factor`.
+
+    This is what "half of this was my brother's" means when it arrives *after*
+    a meal is already logged. Without it the agent reached for correct_meal,
+    which only touches one item -- observed live as "i've updated the naan to 1
+    piece" on a seven-item plate, leaving the other six at full size.
+
+    Proportional, so it composes: halving twice is a quarter, which is what
+    someone correcting themselves would expect.
+    """
+    if factor <= 0 or factor > 1:
+        return {"ok": False, "error": "factor must be between 0 and 1"}
+
+    row = _find_recent_item(conn, user_id, target_hint)
+    if row is None:
+        return {"ok": False, "error": "nothing recent to resize"}
+
+    rows = _meal_items(conn, row["meal_id"])
+    if not rows:
+        return {"ok": False, "error": "that meal has no items left"}
+
+    before_kcal = sum(i["kcal"] for i in rows)
+    for item in rows:
+        conn.execute(
+            "UPDATE meal_items SET qty=?, kcal=?, protein_g=?, carbs_g=?, fat_g=?"
+            " WHERE id = ?",
+            (
+                round(item["qty"] * factor, 3), item["kcal"] * factor,
+                item["protein_g"] * factor, item["carbs_g"] * factor,
+                item["fat_g"] * factor, item["id"],
+            ),
+        )
+        after = dict(conn.execute("SELECT * FROM meal_items WHERE id=?", (item["id"],)).fetchone())
+        log_edit(conn, user_id, item["id"], "scale", dict(item), after, f"x{factor:g}")
+    conn.commit()
+
+    return {
+        "ok": True,
+        "scaled_by": factor,
+        "items_scaled": len(rows),
+        "kcal_removed": round(before_kcal * (1 - factor)),
+        "items": [f"{i['qty'] * factor:g} {i['unit']} {i['name']}" for i in rows],
         "totals_after": daily_totals(conn, user_id, row["local_date"]),
     }
 
@@ -281,13 +359,3 @@ def transcript_append(conn: sqlite3.Connection, user_id: str, role: str, content
         (user_id, role, content, utcnow()),
     )
     conn.commit()
-
-
-def transcript_tail(conn: sqlite3.Connection, user_id: str, limit: int = 6) -> list[dict]:
-    """Recent turns, oldest first. NOT memory -- just continuity across restarts,
-    and hard-capped so it cannot grow into a prompt-bloat problem."""
-    rows = conn.execute(
-        "SELECT role, content FROM transcript WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-        (user_id, limit),
-    ).fetchall()
-    return [dict(r) for r in reversed(rows)]

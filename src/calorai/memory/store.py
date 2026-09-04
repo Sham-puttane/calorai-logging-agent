@@ -34,6 +34,12 @@ ALIAS_DECAY_DAYS = 60
 # How many times a meal must repeat before it is offered as "your usual".
 ALIAS_INFERENCE_THRESHOLD = 3
 
+# How far back "my usual" looks, and the row ceiling on that scan. A habit is
+# recent behaviour; and this runs on the background pass of every turn, so it
+# must not grow with the lifetime of the account.
+HABIT_WINDOW_DAYS = 45
+HABIT_SCAN_LIMIT = 400
+
 # Phrases that mean "you know the one". Matched literally -- cheap, and it
 # cannot hallucinate a meal the way a model asked to guess would.
 _ALIAS_TRIGGERS = [
@@ -187,16 +193,24 @@ def infer_usual(
     provided it has happened at least ALIAS_INFERENCE_THRESHOLD times. Below
     that it is a coincidence, not a habit.
     """
+    # Bounded on both axes. Without a floor this scanned every meal the user
+    # had ever logged, on a background pass that runs every turn -- fine on day
+    # one, quadratic-feeling by month six. The window is also the *correct*
+    # semantics: a habit is recent behaviour, and what someone ate every day
+    # last spring is not "their usual" today.
+    floor = (date.today() - timedelta(days=HABIT_WINDOW_DAYS)).isoformat()
     sql = (
         "SELECT m.id, m.slot, mi.name, mi.qty, mi.unit FROM meals m"
         " JOIN meal_items mi ON mi.meal_id = m.id"
         " WHERE m.user_id = ? AND mi.deleted_at IS NULL AND m.deleted_at IS NULL"
+        " AND m.local_date >= ?"
     )
-    params: list[Any] = [user_id]
+    params: list[Any] = [user_id, floor]
     if slot:
         sql += " AND m.slot = ?"
         params.append(slot)
-    sql += " ORDER BY m.id"
+    sql += " ORDER BY m.id DESC LIMIT ?"
+    params.append(HABIT_SCAN_LIMIT)
 
     meals: dict[int, dict[str, Any]] = {}
     for row in conn.execute(sql, params).fetchall():

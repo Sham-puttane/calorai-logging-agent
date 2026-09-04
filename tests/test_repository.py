@@ -181,3 +181,83 @@ def test_edit_log_records_the_before_and_after(conn):
         "SELECT action FROM edit_log WHERE user_id=? ORDER BY id", (USER,)
     ).fetchall()
     assert [r["action"] for r in rows] == ["log", "correct"]
+
+
+# ---------------------------------------------------------------------------
+# whole-meal operations
+#
+# Regression tests. Both of these were real bugs: delete_meal("") on a
+# five-item meal removed one item and left 705 of 755 calories logged, and a
+# "half of this was my brother's" arriving after a seven-item photo was handled
+# by correcting a single dish -- observed live as "i've updated the naan to 1
+# piece" while the other six stayed full size.
+# ---------------------------------------------------------------------------
+def test_scratch_that_removes_the_whole_meal(conn):
+    repo.log_meal(conn, USER, [
+        FoodItem(name=n, qty=1, unit="katori") for n in ("rice", "dal", "paneer", "raita", "salad")
+    ])
+    assert live_item_count(conn) == 5
+
+    result = repo.delete_meal(conn, USER, target_hint="")
+
+    assert result["items_removed"] == 5
+    assert live_item_count(conn) == 0
+    assert repo.daily_totals(conn, USER)["kcal"] == 0
+
+
+def test_naming_one_food_removes_only_that_food(conn):
+    repo.log_meal(conn, USER, [
+        FoodItem(name="roti", qty=2, unit="piece"), FoodItem(name="chai", qty=1, unit="cup"),
+    ])
+    result = repo.delete_meal(conn, USER, target_hint="chai")
+
+    assert result["items_removed"] == 1
+    assert live_item_count(conn) == 1
+    assert repo.daily_totals(conn, USER)["kcal"] == 210
+
+
+def test_deleting_every_item_marks_the_parent_meal(conn):
+    repo.log_meal(conn, USER, [FoodItem(name="roti", qty=2, unit="piece")])
+    repo.delete_meal(conn, USER)
+    meal = conn.execute("SELECT deleted_at FROM meals WHERE user_id=?", (USER,)).fetchone()
+    assert meal["deleted_at"] is not None
+
+
+def test_scaling_a_meal_halves_every_item_not_one(conn):
+    repo.log_meal(conn, USER, [
+        FoodItem(name="naan", qty=2, unit="piece"),
+        FoodItem(name="rice", qty=1, unit="katori"),
+        FoodItem(name="dal", qty=1, unit="katori"),
+    ])
+    before = repo.daily_totals(conn, USER)["kcal"]
+
+    result = repo.scale_meal(conn, USER, 0.5)
+
+    assert result["items_scaled"] == 3, "every item on the plate, not just the first"
+    after = repo.daily_totals(conn, USER)
+    assert after["kcal"] == pytest.approx(before / 2, rel=0.01)
+    assert live_item_count(conn) == 3, "scaling resizes rows, it does not remove them"
+
+
+def test_scaling_is_proportional_so_it_composes(conn):
+    repo.log_meal(conn, USER, [FoodItem(name="rice", qty=2, unit="katori")])
+    repo.scale_meal(conn, USER, 0.5)
+    repo.scale_meal(conn, USER, 0.5)
+    assert repo.daily_totals(conn, USER)["kcal"] == pytest.approx(200 * 2 * 0.25, rel=0.01)
+
+
+def test_scaling_rejects_a_nonsense_factor(conn):
+    repo.log_meal(conn, USER, [FoodItem(name="rice", qty=1, unit="katori")])
+    for bad in (0, -1, 2.5):
+        assert not repo.scale_meal(conn, USER, bad)["ok"]
+    assert repo.daily_totals(conn, USER)["kcal"] == 200
+
+
+def test_scaling_leaves_other_meals_alone(conn):
+    repo.log_meal(conn, USER, [FoodItem(name="roti", qty=2, unit="piece")])
+    repo.log_meal(conn, USER, [FoodItem(name="rice", qty=1, unit="katori")])
+
+    repo.scale_meal(conn, USER, 0.5)
+
+    totals = repo.daily_totals(conn, USER)
+    assert totals["kcal"] == 210 + 100, "only the most recent meal is resized"
