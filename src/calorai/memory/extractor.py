@@ -179,6 +179,6 @@ def maybe_learn_alias(conn: sqlite3.Connection, user_id: str, text: str) -> bool
     # "remember this as my usual" names no food -- it points at the meal that
     # was just logged, so the alias is built from the log instead of the text.
     if store.means_remember_recent(text):
-        return store.learn_alias_from_recent_meal(conn, user_id) is not None
+        return store.learn_alias_from_recent_meal(conn, user_id, text=text) is not None
 
     return store.learn_usual_if_repeated(conn, user_id)

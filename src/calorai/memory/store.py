@@ -338,33 +338,56 @@ def means_remember_recent(text: str) -> bool:
     return bool(_REMEMBER_RECENT_RE.search(low))
 
 
-def learn_alias_from_recent_meal(
-    conn: sqlite3.Connection, user_id: str, phrase: str = "my usual"
-) -> dict[str, Any] | None:
-    """Store the most recently logged meal under `phrase`.
+_SLOT_WORDS = ("breakfast", "lunch", "dinner", "snack")
 
-    Explicit, so it overwrites an inferred alias: the user telling you outright
-    beats a habit guessed from repetition.
+
+def learn_alias_from_recent_meal(
+    conn: sqlite3.Connection,
+    user_id: str,
+    phrase: str = "my usual",
+    text: str = "",
+) -> dict[str, Any] | None:
+    """Store what was just eaten under `phrase`.
+
+    "this dinner" is not one row. Someone logs the naan and curry, then adds
+    the rice they forgot -- two meals in the table, one dinner to a person. So
+    the whole slot's worth of today's food is collected, not the last INSERT.
+    Taking only the last meal captured "rice" and nothing else, which is a
+    usual nobody would recognise.
+
+    Explicit, so it overwrites an inferred alias: being told outright beats a
+    habit guessed from repetition.
     """
-    row = conn.execute(
-        "SELECT meal_id FROM meal_items WHERE user_id = ? AND deleted_at IS NULL"
-        " ORDER BY id DESC LIMIT 1",
+    last = conn.execute(
+        "SELECT mi.meal_id, m.slot, mi.local_date FROM meal_items mi"
+        " JOIN meals m ON m.id = mi.meal_id"
+        " WHERE mi.user_id = ? AND mi.deleted_at IS NULL ORDER BY mi.id DESC LIMIT 1",
         (user_id,),
     ).fetchone()
-    if row is None:
+    if last is None:
         return None
-    items = [
-        {"name": r["name"], "qty": r["qty"], "unit": r["unit"]}
-        for r in conn.execute(
+
+    # A slot named in the message wins over the one inferred from the last row.
+    named = next((w for w in _SLOT_WORDS if w in (text or "").lower()), None)
+    slot = named or last["slot"]
+
+    if slot:
+        rows = conn.execute(
+            "SELECT mi.name, mi.qty, mi.unit FROM meal_items mi"
+            " JOIN meals m ON m.id = mi.meal_id"
+            " WHERE mi.user_id = ? AND mi.deleted_at IS NULL"
+            " AND mi.local_date = ? AND m.slot = ? ORDER BY mi.id",
+            (user_id, last["local_date"], slot),
+        ).fetchall()
+    else:
+        rows = conn.execute(
             "SELECT name, qty, unit FROM meal_items"
             " WHERE meal_id = ? AND deleted_at IS NULL",
-            (row["meal_id"],),
-        )
-    ]
+            (last["meal_id"],),
+        ).fetchall()
+
+    items = [{"name": r["name"], "qty": r["qty"], "unit": r["unit"]} for r in rows]
     if not items:
         return None
-    slot = conn.execute(
-        "SELECT slot FROM meals WHERE id = ?", (row["meal_id"],)
-    ).fetchone()["slot"]
     put_alias(conn, user_id, phrase, items, slot, source="explicit")
     return {"phrase": phrase, "items": items, "slot": slot}

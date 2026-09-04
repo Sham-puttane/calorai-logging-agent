@@ -274,3 +274,38 @@ def test_ordinary_food_talk_never_touches_the_alias(conn):
         extractor.maybe_learn_alias(conn, USER, message)
 
     assert {i["name"] for i in store.resolve_alias(conn, USER, "my usual")["items"]} == {"oats"}
+
+
+def test_a_dinner_spread_over_two_messages_is_remembered_whole(conn):
+    """"this dinner" is not one INSERT. Someone logs the naan and curry, then
+    adds the rice they forgot -- two meal rows, one dinner to a person. Taking
+    only the last row captured "rice" and nothing else."""
+    repo.log_meal(conn, USER, items([("naan", 1, "piece"), ("paneer", 1, "katori")]), slot="dinner")
+    repo.log_meal(conn, USER, items([("rice", 1, "katori")]), slot="dinner")
+
+    extractor.maybe_learn_alias(conn, USER, "remember this dinner thats my usual")
+
+    resolved = store.resolve_alias(conn, USER, "my usual", slot="dinner")
+    assert {i["name"] for i in resolved["items"]} == {"naan", "paneer", "rice"}
+
+
+def test_remembering_a_slot_does_not_sweep_in_other_meals(conn):
+    repo.log_meal(conn, USER, items([("oats", 1, "katori")]), slot="breakfast")
+    repo.log_meal(conn, USER, items([("dal", 1, "katori")]), slot="dinner")
+
+    extractor.maybe_learn_alias(conn, USER, "remember this dinner thats my usual")
+
+    resolved = store.resolve_alias(conn, USER, "my usual", slot="dinner")
+    assert {i["name"] for i in resolved["items"]} == {"dal"}, "breakfast is not dinner"
+
+
+def test_a_slot_named_in_the_message_beats_the_one_inferred(conn):
+    """"remember my breakfast as my usual", typed after logging dinner, should
+    save the breakfast."""
+    repo.log_meal(conn, USER, items([("oats", 1, "katori")]), slot="breakfast")
+    repo.log_meal(conn, USER, items([("dal", 1, "katori")]), slot="dinner")
+
+    extractor.maybe_learn_alias(conn, USER, "remember my breakfast as my usual")
+
+    resolved = store.resolve_alias(conn, USER, "my usual", slot="breakfast")
+    assert {i["name"] for i in resolved["items"]} == {"oats"}
