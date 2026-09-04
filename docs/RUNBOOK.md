@@ -60,6 +60,67 @@ Then the photo:
 7. Upload the same photo again, and this time type `half of this was my brother's`.
    → the whole plate halves.
 
+## 1.4b Proving persistent memory — the bit they said they care most about
+
+Memory has to survive a **process restart**, not just a conversation. Prove it by killing the
+process, which is the only demonstration that cannot be faked by conversation history sitting in
+a variable.
+
+**Session one** — terminal, not the UI, so the restart is visible:
+
+```bash
+python -m calorai.cli --user memtest
+```
+```
+i'm vegetarian and aiming for 140g of protein
+1 naan, 1 katori paneer and 1 cup daal for dinner
+remember this dinner as my usual
+/memory
+```
+
+`/memory` should show `vegetarian · protein target 140g` and `"my usual" = ...` with the whole
+dinner. Then **`/quit` — actually exit the process.**
+
+**Session two** — a brand new process:
+
+```bash
+python -m calorai.cli --user memtest
+```
+```
+/memory                          → still there, from SQLite
+how much protein have I had today?   → knows your 140g target
+my usual                         → logs the dinner it learned last session
+```
+
+The point to make on camera: **nothing was in memory except what was worth keeping.** Say
+`/history` and you'll see meals logged; `/memory` holds only the diet, the target and the alias.
+Logging food writes nothing to memory on purpose — a meal is an event, not a fact about a person.
+
+To show *selectivity* rather than assert it:
+
+```bash
+pytest tests/test_memory.py::test_the_gate_runs_before_any_model_call -q
+```
+
+That test replaces the extractor's model call with something that raises, then sends "had 2 rotis"
+— proving the model is **never consulted** for ordinary food talk. The saving comes from not
+asking, not from the model answering "none".
+
+## 1.4c Showing the ambiguity policy
+
+Three messages, three different decisions — worth doing back to back because the contrast is the
+point:
+
+| Message | What should happen | Why |
+|---|---|---|
+| `skipped lunch but grazed all afternoon` | **logs an estimate, asks nothing** | vague amount is not a reason to interrogate |
+| `[photo]` | **asks for confirmation, writes nothing** | a photo delegates the whole description to a model |
+| `[photo of something odd]` | **asks what the food is** | it cannot identify it, so logging would be garbage |
+
+Say the rule out loud: *"low identification asks, low portion logs and admits the guess."* Gating
+both the same way would make it ask about portions on nearly every photo, which is the over-asking
+failure the brief warns about.
+
 ## 1.5 If something goes wrong
 
 | Symptom | Cause | Fix |
