@@ -203,7 +203,10 @@ def main() -> None:
         result: dict = {}
         try:
             for kind, payload in stream_turn(conn, user, message, image_path=image_path, graph=graph):
-                if kind == "token":
+                if kind == "status":
+                    # A photo has ~6s of vision call before any token exists.
+                    placeholder.markdown(f"_{payload}_")
+                elif kind == "token":
                     pieces.append(payload)
                     placeholder.markdown("".join(pieces) + "▌")
                 else:

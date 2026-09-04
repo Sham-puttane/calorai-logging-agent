@@ -165,7 +165,9 @@ def main() -> None:
                 for kind, payload in stream_turn(
                     conn, args.user, caption, image_path=image_path, graph=graph
                 ):
-                    if kind == "token":
+                    if kind == "status":
+                        console.print(f"[dim]{payload}[/dim] ", end="")
+                    elif kind == "token":
                         console.print(payload, end="", highlight=False, markup=False)
                         printed = True
                     else:

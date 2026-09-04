@@ -152,7 +152,9 @@ def main() -> None:
                 conn, USER, message,
                 image_path=str(Path(image)) if image else None, graph=graph,
             ):
-                if kind == "token":
+                if kind == "status":
+                    console.print(f"[dim]{payload}[/dim] ", end="")
+                elif kind == "token":
                     console.print(payload, end="", markup=False, highlight=False)
                     printed = True
                 else:

@@ -487,3 +487,24 @@ def test_streaming_never_leaks_vision_json(conn):
 
     for leak in ("id_confidence", "portion_confidence", "scale_reference", '"alternatives"'):
         assert leak not in streamed, f"vision JSON leaked into the reply: {leak}"
+
+
+def test_a_photo_turn_announces_itself_before_any_token(conn):
+    """The vision call is ~6s of silence before a token exists. Without a
+    status the user watches nothing happen and assumes it hung."""
+    from calorai.graph import stream_turn
+
+    graph = build_graph(conn, USER, streaming=True)
+    events = list(stream_turn(conn, USER, "", image_path="images/plate.jpg", graph=graph))
+
+    assert events[0][0] == "status", "the very first thing out must be the status"
+    assert "photo" in events[0][1].lower()
+
+
+def test_a_text_turn_has_no_status_noise(conn):
+    """Text replies stream immediately, so a status line would just be clutter."""
+    from calorai.graph import stream_turn
+
+    graph = build_graph(conn, USER, streaming=True)
+    kinds = {k for k, _ in stream_turn(conn, USER, "had 2 rotis", graph=graph)}
+    assert "status" not in kinds
