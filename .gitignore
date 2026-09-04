@@ -11,3 +11,5 @@ bench/results/
 build/
 dist/
 demo.db
+*.db-shm
+*.db-wal
