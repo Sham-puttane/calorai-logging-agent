@@ -1,17 +1,23 @@
 """Model selection.
 
-Two paths, two different models, chosen for different reasons:
+Two paths, two different models. Every id below was **measured**, not taken
+from a docs page -- see docs/RESEARCH.md for the numbers.
 
-* **text / agent loop** -- Groq `openai/gpt-oss-20b`. The loop is tool calling,
-  so throughput and function-calling reliability are what matter, and Groq is
-  roughly 1000 tok/s on a free tier.
-* **vision** -- Gemini `gemini-3.5-flash-lite`. Groq's vision offering was
-  Llama 4 Scout, which is preview-only and was deprecated in June 2026; an
-  image path built on it has a retirement date. See docs/RESEARCH.md.
+* **text / agent loop** -- Groq `openai/gpt-oss-20b`, 230 ms warm. The loop is
+  tool calling, so function-calling reliability and throughput are the axes
+  that matter.
+* **vision** -- Gemini `gemini-2.5-flash-lite`, 429 ms warm. Note the version
+  is *older* than the flagship on purpose: `gemini-3.5-flash-lite` is a
+  thinking model that measured 8.1 s warm and 20 s cold, and it rejects
+  `thinking_budget=0`. Nineteen times slower for a job that is structured
+  extraction, not reasoning.
+* **failover** -- Gemini, because it is a genuinely different provider. It was
+  Cerebras until Cerebras returned 402 Payment Required on every model its key
+  could see. Failover matters here because Groq's free tier is 30 rpm and the
+  latency benchmark issues 30 requests inside a minute.
 
-Cerebras sits behind Groq as a failover. That is not redundancy for its own
-sake: the free tier is 30 requests/minute and the latency benchmark issues 30
-requests in about a minute, so without a fallback the benchmark cannot finish.
+Groq was rejected for vision on evidence: its vision model was Llama 4 Scout,
+preview-only and deprecated in June 2026.
 
 `mock` needs no key and no network, and is the default for tests and evals.
 """
@@ -59,9 +65,20 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
             api_key=_require("GROQ_API_KEY", "groq"),
             temperature=0.3,
             streaming=streaming,
-            # One retry only. On a messaging surface a fast failure that falls
-            # over to Cerebras beats a slow success on the primary.
-            max_retries=1,
+            # gpt-oss is a reasoning model, and reasoning is what made the
+            # multi-round turns slow: measured 12-20s on two-tool turns at the
+            # default effort, against ~900ms on single-tool ones. Deciding
+            # between six tools does not need deliberation, so effort is
+            # capped. This was the single biggest latency win in the project.
+            reasoning_effort=os.environ.get("GROQ_REASONING_EFFORT", "low"),
+            # Zero retries, deliberately. Groq's free tier limit is tokens per
+            # minute (~8k), which this agent hits in roughly two turns, and the
+            # SDK's default backoff sits on a 429 for 10-18 seconds before
+            # giving up. Failing instantly into the Gemini fallback turns a
+            # rate-limited turn from ~18s into ~1s. On a messaging surface a
+            # fast answer from the second-choice model beats a slow one from
+            # the first.
+            max_retries=0,
             timeout=20,
         )
 
@@ -82,7 +99,7 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(
-            model=os.environ.get("GEMINI_VISION_MODEL", "gemini-3.5-flash-lite"),
+            model=os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash-lite"),
             google_api_key=_require("GOOGLE_API_KEY", "gemini"),
             temperature=0.2,
         )
@@ -137,7 +154,7 @@ def active_backends() -> dict[str, str]:
     models = {
         "groq": os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-20b"),
         "cerebras": os.environ.get("CEREBRAS_TEXT_MODEL", "llama-3.3-70b"),
-        "gemini": os.environ.get("GEMINI_VISION_MODEL", "gemini-3.5-flash-lite"),
+        "gemini": os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash-lite"),
         "ollama": os.environ.get("OLLAMA_TEXT_MODEL", "qwen2.5:3b"),
         "mock": "rule-based stub",
     }

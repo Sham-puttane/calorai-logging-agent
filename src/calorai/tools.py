@@ -39,12 +39,12 @@ from .schemas import FoodItem, Nutrition
 
 
 class ItemArg(BaseModel):
-    name: str = Field(description="Food name, e.g. 'paratha'")
-    qty: float = Field(default=1.0, description="How many units, e.g. 2")
-    unit: str = Field(
-        default="serving",
-        description="piece | katori | cup | glass | slice | serving | plate",
-    )
+    # Field descriptions are sent on every single call, so they are kept to the
+    # minimum that still steers the model. This schema alone was 189 tokens
+    # before trimming -- the most expensive of the six tools.
+    name: str = Field(description="food, e.g. paratha")
+    qty: float = Field(default=1.0, description="amount, e.g. 2 or 0.67")
+    unit: str = Field(default="serving", description="piece|katori|cup|glass|serving")
 
 
 def _dump(payload: dict[str, Any]) -> str:
@@ -82,26 +82,33 @@ def make_estimator(enabled: bool = True):
 
 
 def make_tools(
-    conn: sqlite3.Connection, user_id: str, estimator=None
+    conn: sqlite3.Connection,
+    user_id: str,
+    estimator=None,
+    note_ref: dict[str, str] | None = None,
 ) -> list[BaseTool]:
-    """Build the tool surface bound to one user's session."""
+    """Build the tool surface bound to one user's session.
+
+    `note_ref` is a mutable box the graph fills with the raw user message each
+    turn. Provenance is worth storing, but it is not a decision the model
+    should be spending tokens on -- exposing a `note` parameter cost schema
+    tokens on every call to have the model retype what we already have.
+    """
+    note_ref = {} if note_ref is None else note_ref
 
     # -- writes ---------------------------------------------------------------
     def log_meal(
         items: list[ItemArg],
         slot: str = "",
         day: str = "",
-        note: str = "",
         is_estimate: bool = False,
     ) -> str:
-        """Record a NEW meal the user just told you about. Use for anything
-        newly eaten. Do NOT use this to fix a meal already logged -- that is
-        correct_meal. Returns the logged items and the day's updated totals."""
+        """Log a NEW meal. Not for fixing something already logged."""
         parsed = [FoodItem(name=i.name, qty=i.qty, unit=i.unit) for i in items]
         return _dump(
             repo.log_meal(
                 conn, user_id, parsed,
-                slot=slot or None, day=day or None, note=note or None,
+                slot=slot or None, day=day or None, note=note_ref.get("text"),
                 is_estimate=is_estimate, estimator=estimator,
             )
         )
@@ -112,10 +119,9 @@ def make_tools(
         new_name: str = "",
         new_unit: str = "",
     ) -> str:
-        """Fix something ALREADY logged -- 'actually that was 3 rotis not 2',
-        'that was dal not rice'. Updates the existing entry in place so totals
-        change by the difference and nothing is double counted. target_hint is
-        the food to fix; leave it empty to mean the most recent thing logged."""
+        """Fix something already logged ('actually that was 3 rotis not 2').
+        Updates in place, so nothing is double counted. Empty target_hint means
+        the most recent item."""
         return _dump(
             repo.correct_meal(
                 conn, user_id, target_hint=target_hint,
@@ -125,20 +131,17 @@ def make_tools(
         )
 
     def delete_meal(target_hint: str = "") -> str:
-        """Remove something logged by mistake -- 'scratch that', 'I didn't
-        actually have the chai'. Leave target_hint empty for the most recent."""
+        """Remove something logged by mistake. Empty hint = most recent."""
         return _dump(repo.delete_meal(conn, user_id, target_hint=target_hint))
 
     # -- reads ----------------------------------------------------------------
     def get_daily_totals(day: str = "today") -> str:
-        """Calories and macros for a day. Use for 'how am I doing', 'how much
-        protein have I had'. Accepts 'today', 'yesterday' or YYYY-MM-DD."""
+        """Calories and macros for a day ('today', 'yesterday', YYYY-MM-DD)."""
         return _dump(repo.daily_totals(conn, user_id, day or "today"))
 
     def find_meals(query: str = "", day: str = "", slot: str = "") -> str:
-        """Look up meals already logged. Use this for 'same as yesterday' --
-        fetch that meal, then log_meal the items it returns. Also answers
-        'what did I have for lunch'."""
+        """Look up past meals. For 'same as yesterday': call this, then
+        log_meal what it returns."""
         return _dump(
             repo.find_meals(
                 conn, user_id, query=query, day=day or None, slot=slot or None
@@ -146,9 +149,8 @@ def make_tools(
         )
 
     def lookup_nutrition(food: str, qty: float = 1.0, unit: str = "serving") -> str:
-        """Nutrition for a food WITHOUT logging it -- 'how many calories in a
-        samosa?'. Never call this before log_meal; logging handles its own
-        lookup."""
+        """Nutrition for a food WITHOUT logging it. Never call before
+        log_meal."""
         result = resolve(conn, FoodItem(name=food, qty=qty, unit=unit), estimator=estimator)
         return _dump(
             {

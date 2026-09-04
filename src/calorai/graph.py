@@ -27,7 +27,13 @@ import sqlite3
 import time
 from typing import Annotated, Any, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -42,36 +48,41 @@ from .tools import make_estimator, make_tools
 # messaging surface a quick honest "say that again?" beats a long silence.
 MAX_TOOL_ROUNDS = 3
 
+# Every token here rides on every call, and the free tier's binding limit is
+# tokens per minute -- so this prompt is kept terse on purpose. It was roughly
+# twice this length and behaved no better; the rules that survived are the ones
+# that changed a measured outcome.
 SYSTEM_PROMPT = """\
-You are CalorAI, a food logging assistant people text like a friend. Replies go \
-to WhatsApp: short, warm, lowercase-friendly, no bullet points, no tables, no \
-emoji spam. One or two sentences.
+You are CalorAI. People text you what they ate, like texting a friend. Reply in \
+one or two short lowercase sentences. No bullets, tables or emoji.
 
-WHEN TO LOG WITHOUT ASKING
-Log it. Assume a normal home portion and say what you assumed, so they can \
-correct you in three words. "logged 2 parathas and a chai, ~430 cal" is a good \
-reply. Guessing and saying so beats interrogating.
+Default to logging, not asking. Assume a normal home portion and say what you \
+assumed. Ask only if you cannot tell what the food is, and then ask ONE \
+question. Never ask about grams, oil or brand.
 
-WHEN TO ASK
-Ask only when logging would produce garbage: you genuinely cannot tell what the \
-food is, or the amount could swing the calories by more than about 40%. Ask ONE \
-question, never a list. Never ask about exact grams, cooking oil, or brand.
+Report ONLY what the tool actually returned -- the foods in its result, and its
+kcal number. Do not carry food or numbers over from earlier in the conversation.
 
-CORRECTIONS
-"actually that was 3 not 2" means fix what is already there. Use correct_meal, \
-never log_meal -- logging again would double count. Then confirm the new total.
+Vague amounts are not a reason to ask: "grazed all afternoon" -> log 1 serving \
+of "assorted snacks" and call it a rough guess.
 
-REFERENCES TO PAST MEALS
-"same as yesterday" means look it up with find_meals, then log those items with \
-log_meal. Tell them what you logged so they can catch a wrong guess.
+Fractions are amounts of one item, not counts: "two thirds of the box" is \
+qty 0.67, "half" 0.5, "a couple" 2.
 
-WHAT YOU KNOW ABOUT THEM
-Anything under [what I know about you] is durable and already confirmed. Use it \
-without re-asking. If they are vegetarian, do not offer them chicken.
+"actually that was 3 not 2" -> correct_meal, never log_meal; logging again \
+double counts. Then say what changed and the new day total, nothing else.
 
-NUMBERS
-Never do arithmetic yourself. Totals come from get_daily_totals. Report what the \
-tools return."""
+Counts belong to their own food: "2 parathas and chai" is qty 2 paratha AND \
+qty 1 chai. Do not spread one number across every item.
+
+"same as yesterday" / "my usual" needs TWO calls: find_meals, then log_meal \
+with exactly what it returned. Finding is not logging.
+
+Never say "logged" unless log_meal returned ok.
+
+[what I know about you] is already confirmed -- use it, never re-ask it.
+
+Never do arithmetic. Totals come from get_daily_totals."""
 
 
 class AgentState(TypedDict, total=False):
@@ -162,22 +173,56 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
     from .llm import get_fallback_text_model, get_text_model
 
     estimator = make_estimator()
-    tools = make_tools(conn, user_id, estimator=estimator)
+    note_ref: dict[str, str] = {}
+    tools = make_tools(conn, user_id, estimator=estimator, note_ref=note_ref)
 
-    primary = get_text_model(streaming).bind_tools(tools)
+    base = get_text_model(streaming)
     fallback = get_fallback_text_model()
-    if fallback is not None:
-        # Free tiers are rate limited; the benchmark alone will trip Groq's
-        # 30 rpm. Falling over keeps a run alive instead of dying at request 31.
-        primary = primary.with_fallbacks([fallback.bind_tools(tools)])
 
-    tool_node = ToolNode(tools)
+    def _with_fallback(model, backup):
+        # Groq's free tier limits tokens per minute, not just requests, and
+        # this agent reaches it in about two turns. The fallback is a different
+        # provider on purpose, so a 429 costs a model swap rather than a wait.
+        # The backup must be bound the same way as the primary -- a fallback
+        # without tool schemas cannot answer a call that needs a tool.
+        return model.with_fallbacks([backup]) if backup is not None else model
+
+    # Two bindings of the same model. `deciding` carries the tool schemas;
+    # `phrasing` does not, and is used once a turn's work is already done.
+    # The schemas are 616 of the ~870 fixed tokens per call, so dropping them
+    # from the reply call cuts roughly a third of the tokens in a normal
+    # logging turn -- which matters because tokens per minute, not latency,
+    # is the binding constraint on the free tier.
+    deciding = _with_fallback(
+        base.bind_tools(tools), fallback.bind_tools(tools) if fallback else None
+    )
+    phrasing = _with_fallback(base, fallback)
+
+    def _tool_failed(exc: Exception) -> str:
+        """Turn a tool exception into something the agent can talk about.
+
+        LangGraph's ToolNode re-raises by default, which on a messaging surface
+        means a database hiccup reaches the user as a stack trace and the turn
+        is lost. Returning a ToolMessage instead lets the agent apologise and
+        keep the conversation alive, which is the correct failure mode when
+        someone is mid-sentence about their lunch.
+        """
+        return (
+            f"That tool failed: {type(exc).__name__}: {exc}. "
+            "Tell the user briefly that it didn't save and ask them to try again."
+        )
+
+    tool_node = ToolNode(tools, handle_tool_errors=_tool_failed)
 
     def ingest(state: AgentState) -> dict[str, Any]:
         started = time.perf_counter()
         uid = state["user_id"]
         last = state["messages"][-1] if state["messages"] else None
         text = str(last.content) if isinstance(last, HumanMessage) else ""
+
+        # provenance for whatever gets logged this turn, without spending
+        # schema tokens asking the model to repeat the message back to us
+        note_ref["text"] = text[:200]
 
         # 1. shorthand -> concrete food, before the model is involved
         expansion = None
@@ -228,7 +273,32 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
         if analysis:
             preamble.append(SystemMessage(content=_describe_plate(analysis)))
 
-        response = primary.invoke(preamble + list(state["messages"]))
+        # After a terminal write the turn's work is finished and all that is
+        # left is wording, so the tool schemas are dead weight. find_meals and
+        # get_daily_totals are NOT terminal -- "same as yesterday" still has a
+        # log_meal to make -- so they keep the tools bound.
+        done = _work_is_done(state["messages"])
+        model = phrasing if done else deciding
+        if done:
+            # Say so explicitly. A model that has had tools all turn will try to
+            # call one anyway, and Groq rejects a call to a tool that was not in
+            # the request with a 400 -- observed as a hallucinated
+            # 'ask_question' tool. Cheaper than re-sending 597 tokens of schema.
+            preamble.append(
+                SystemMessage(
+                    content="The work is done and saved. Reply in plain words only. "
+                    "Do not call any tool."
+                )
+            )
+
+        try:
+            response = model.invoke(preamble + list(state["messages"]))
+        except Exception as exc:  # noqa: BLE001
+            # Every provider is down or throttled. Free tiers run out, and when
+            # they do the user should get a sentence, not a stack trace -- and
+            # crucially nothing is written, so their day's total stays correct
+            # and they can just say it again.
+            response = AIMessage(content=_degraded_reply(exc))
         spans = dict(state.get("spans", {}))
         spans["agent"] = spans.get("agent", 0.0) + (time.perf_counter() - started)
         return {
@@ -284,6 +354,42 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
     builder.add_edge("vision_question", END)
 
     return builder.compile()
+
+
+def _degraded_reply(exc: Exception) -> str:
+    """What to say when no model is reachable.
+
+    Distinguishes throttling from an outage because the advice differs: a rate
+    limit clears on its own in under a minute, so "try again in a moment" is
+    actionable, whereas a missing key is not something the user can wait out.
+    """
+    text = f"{type(exc).__name__} {exc}".lower()
+    if "429" in text or "rate" in text or "quota" in text or "resource_exhausted" in text:
+        return (
+            "i'm being rate limited right now -- nothing was saved. "
+            "give it a few seconds and send that again?"
+        )
+    if "401" in text or "api key" in text or "auth" in text:
+        return "my connection to the model isn't set up right, so i couldn't log that."
+    return "something went wrong on my side and i didn't save that -- try again?"
+
+
+#: Tools after which nothing further can usefully happen this turn.
+_TERMINAL_TOOLS = {"log_meal", "correct_meal", "delete_meal"}
+
+
+def _work_is_done(messages: list[BaseMessage]) -> bool:
+    """True when the last thing that happened was a successful terminal write.
+
+    Used to decide whether the next model call still needs the tool schemas.
+    A failed write is not terminal -- the agent may want to try something else.
+    """
+    if not messages or not isinstance(messages[-1], ToolMessage):
+        return False
+    last = messages[-1]
+    if getattr(last, "name", None) not in _TERMINAL_TOOLS:
+        return False
+    return '"ok": true' in str(last.content).lower()
 
 
 def _describe_plate(analysis: dict[str, Any]) -> str:

@@ -189,8 +189,11 @@ def main() -> int:
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
-    if args.backend:
-        os.environ["CALORAI_TEXT_BACKEND"] = args.backend
+    # Default to the offline mock so a clean clone scores deterministically with
+    # no keys. .env may point at a real provider for interactive use; evals opt
+    # in explicitly with --backend.
+    os.environ["CALORAI_TEXT_BACKEND"] = args.backend or "mock"
+    os.environ["CALORAI_VISION_BACKEND"] = args.backend or "mock"
     if args.no_fast_path:
         os.environ["CALORAI_FAST_PATH"] = "0"
 
