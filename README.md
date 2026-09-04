@@ -26,7 +26,7 @@ calorai › logged rice, dal and paneer at half portions, ~241 cal —
 
 ## Setup
 
-Python 3.12+.
+Python 3.11+ — developed and tested on 3.12.4. On 3.10 the install stops with a clear version error rather than failing later.
 
 ```bash
 git clone <this repo> && cd calorai-agent
@@ -43,7 +43,7 @@ is still there and still accurate if you prefer it — you'll just need `PYTHONP
 backend. To verify the clone before configuring anything:
 
 ```bash
-pytest tests/ -q                 # 177 tests
+pytest tests/ -q                 # 178 tests
 python evals/run_evals.py        # 21 cases, 77 assertions
 ```
 
@@ -558,7 +558,7 @@ rejection is worth more than an assumed one.
 ## Testing and evals
 
 ```bash
-pytest tests/ -q                             # 177 tests
+pytest tests/ -q                             # 178 tests
 python evals/run_evals.py                    # 21 cases, 77 assertions
 python evals/run_evals.py --no-fast-path     # same, with the short-circuit off
 python evals/run_evals.py --backend groq     # score a real model

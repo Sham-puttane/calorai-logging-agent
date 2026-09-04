@@ -267,6 +267,24 @@ Switch to the board's **latency** and **bugs** sections:
 > structurally couldn't — including the model parroting an example from my own system prompt back
 > at me, and a portion getting halved twice because I had belt-and-braces logic that wasn't."
 
+**The last bug, and the best one — worth a full minute:**
+> "The one I found last is the one I'd lead with. My failover provider was pointed at a model I'd
+> verified with a single call. When I finally ran the whole conversation through it, it told me
+> 'roughly 170 for assorted snacks' — and it had made no tool call at all. It was confirming meals
+> it never wrote."
+
+> "That's the worst failure this product can have, because the user has no reason to check. And
+> notice what couldn't catch it: the mock can't, because the mock always calls the tool. A unit test
+> can't, because the tool is correct. The latency benchmark can't — it passed, and it was actually
+> *faster* than the model I replaced it with, which is exactly how it became the default."
+
+> "What caught it is a script that walks the whole conversation and prints the database after every
+> turn, so a reply that sounds right sits directly above a row count that didn't move. The
+> generalisation I'd defend is: a health check has to spend what a real request spends. I got that
+> same lesson twice from opposite directions — a five-token 'say OK' probe returning 200 while every
+> real turn was failing on the daily token cap, and a single-call probe passing on a model that
+> couldn't hold a conversation."
+
 > "With more time: get the image path under three seconds, and prompt caching, which on a
 > token-limited tier converts directly into more usable turns."
 
