@@ -388,13 +388,41 @@ numbers a lie.
 Token reduction is therefore a *correctness* lever here, not only a cost one — which is why #3 was
 worth doing.
 
-### Local inference: measured, and rejected
+### Local inference: actually measured, then rejected
 
-Ollama ships as a real backend (`CALORAI_TEXT_BACKEND=ollama`) so the repo has a zero-key path. But
-on this hardware — i7-1165G7, Intel Iris Xe integrated, no CUDA, 4 cores — a 3B Q4 model generates
-~8–15 tok/s with slow prompt eval. An agent turn carries ~1.1k prompt tokens across two hops, which
-puts it at tens of seconds per turn, and small-model tool-calling reliability would damage the two
-things this project cares most about. Reported rather than quietly dropped.
+Ollama ships as a real backend so the repo has a zero-key path, and I ran it rather than
+speculating about it:
+
+```bash
+python bench/latency.py --backend ollama --skip-image --n 6
+```
+
+| | Groq `gpt-oss-20b` | Ollama `qwen2.5:3b` (local) |
+|---|---|---|
+| p50 (whole turn) | **766 ms** | 8511 ms |
+| p95 | **1257 ms** | 19163 ms |
+| agent stage p50 | **790 ms** | **14821 ms** |
+| cold start | 924 ms | **29067 ms** |
+
+Hardware: i7-1165G7, Intel Iris Xe integrated, **no CUDA**, 4 cores.
+
+Read the *agent stage* row, not the p50 row — the local p50 is flattered by the fast path serving
+a third of those turns in microseconds with no model at all. On the turns that actually reach the
+model, local inference is **~19× slower** than the hosted path, and a cold start costs 29 seconds.
+
+That is not "a bit slow for a chat app". A user texting "had 2 rotis" would wait fifteen seconds.
+And that is before the second problem: a 3B model's tool-calling reliability would put pressure on
+exactly the two things this project is built around — picking `correct_meal` over `log_meal`, and
+getting `qty` right.
+
+**The honest conclusion is that self-hosting is the wrong direction here for a reason that has
+nothing to do with model quality:** p50 on the hosted path is already dominated by *network
+round-trip*, and the agent's own overhead is sub-millisecond. Self-hosting trades a 766 ms network
+call for a 15-second local one. On a machine with a discrete GPU the arithmetic changes completely
+— this is a statement about this laptop, not about local models.
+
+Kept in the repo anyway, because "runs with no API keys" has real value and because a measured
+rejection is worth more than an assumed one.
 
 ---
 

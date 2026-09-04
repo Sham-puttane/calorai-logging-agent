@@ -87,7 +87,9 @@ NOT things to log. Call no tool, just acknowledge in a few words. Logging \
 "1 vegetarian meal" because someone told you their diet is badly wrong.
 
 "same as yesterday" / "my usual" needs TWO calls: find_meals, then log_meal \
-with exactly what it returned. Finding is not logging.
+with exactly the items find_meals returned. Finding is not logging, and \
+"exactly" means from the tool result -- never from what you remember and never \
+from the usual, which is a different meal.
 
 Never say "logged" unless log_meal returned ok.
 
@@ -305,11 +307,13 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
         try:
             response = model.invoke(preamble + list(state["messages"]))
         except Exception as exc:  # noqa: BLE001
-            # Every provider is down or throttled. Free tiers run out, and when
-            # they do the user should get a sentence, not a stack trace -- and
-            # crucially nothing is written, so their day's total stays correct
-            # and they can just say it again.
-            response = AIMessage(content=_degraded_reply(exc))
+            # Every provider is down or throttled. The user gets a sentence
+            # rather than a stack trace -- but *which* sentence depends on
+            # whether the write already went through, because this failure can
+            # land on the reply-phrasing call after the food is safely logged.
+            response = AIMessage(
+                content=_degraded_reply(exc, saved=_work_is_done(state["messages"]))
+            )
         spans = dict(state.get("spans", {}))
         spans["agent"] = spans.get("agent", 0.0) + (time.perf_counter() - started)
         return {
@@ -367,15 +371,29 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
     return builder.compile()
 
 
-def _degraded_reply(exc: Exception) -> str:
+def _degraded_reply(exc: Exception, saved: bool = False) -> str:
     """What to say when no model is reachable.
 
-    Distinguishes throttling from an outage because the advice differs: a rate
-    limit clears on its own in under a minute, so "try again in a moment" is
-    actionable, whereas a missing key is not something the user can wait out.
+    `saved` matters more than the error does. This failure can land on the
+    *reply-phrasing* call, after the food is already committed -- observed live
+    as "nothing was saved" while the day's total had just moved by 1620 kcal.
+    Telling someone their meal was lost when it wasn't is worse than the rate
+    limit itself: they will log it again, and now the total really is wrong.
+
+    Beyond that, throttling and an outage get different advice, because a rate
+    limit clears itself in under a minute and a missing key does not.
     """
     text = f"{type(exc).__name__} {exc}".lower()
-    if "429" in text or "rate" in text or "quota" in text or "resource_exhausted" in text:
+    throttled = any(k in text for k in ("429", "rate", "quota", "resource_exhausted"))
+
+    if saved:
+        return (
+            "saved that. i'm rate limited so i can't give you the breakdown right now"
+            " -- ask me for your total in a moment."
+            if throttled
+            else "saved that, but something went wrong writing the reply. ask me for your total."
+        )
+    if throttled:
         return (
             "i'm being rate limited right now -- nothing was saved. "
             "give it a few seconds and send that again?"
