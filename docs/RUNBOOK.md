@@ -21,7 +21,7 @@ Do **Part 1** first, on your own, with nothing recording. Then **Part 2** for th
 cd D:\calorai-agent
 .venv\Scripts\activate
 
-pytest tests/ -q                     # expect: 88 passed
+pytest tests/ -q                     # expect: 146 passed
 python evals/run_evals.py            # expect: 21/21 cases, 77/77 assertions
 python bench\_real_e2e.py --delay 7  # expect: p50 under ~1s, throttled=0
 ```

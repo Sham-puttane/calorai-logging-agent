@@ -109,7 +109,11 @@ def make_tools(
         day: str = "",
         is_estimate: bool = False,
     ) -> str:
-        """Log a NEW meal. Not for fixing something already logged."""
+        """Log a NEW meal. Not for fixing something already logged.
+
+        slot: pass breakfast|lunch|dinner|snack whenever the user says which
+        meal it was, even if the clock disagrees. Empty means "they didn't
+        say", and the time of day is used instead."""
         parsed = [FoodItem(name=i.name, qty=i.qty, unit=i.unit) for i in items]
         return _dump(
             repo.log_meal(

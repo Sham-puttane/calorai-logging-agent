@@ -39,7 +39,7 @@ is still there and still accurate if you prefer it — you'll just need `PYTHONP
 backend. To verify the clone before configuring anything:
 
 ```bash
-pytest tests/ -q                 # 98 tests
+pytest tests/ -q                 # 146 tests
 python evals/run_evals.py        # 21 cases, 77 assertions
 ```
 
@@ -232,7 +232,7 @@ Three stores, and **none of them is conversation history**.
 | Store | Holds | Written | Retrieved |
 |---|---|---|---|
 | `profile_facts` | `diet=vegetarian`, `protein_target_g=140` | Background pass, **after the reply ships** | *All of them, every turn* |
-| `aliases` | `"my usual"` → a concrete item list | On an explicit statement, or inferred after 3 repeats | Exact phrase match in `ingest`, **before** the model |
+| `aliases` | `"my usual"` → a concrete item list, **per meal slot** | Stated, referenced, or inferred after 3 repeats | Exact phrase match in `ingest`, **before** the model |
 | `meals` | The log itself | `log_meal` | The `find_meals` **tool** |
 
 Five positions I'd defend:
@@ -258,6 +258,19 @@ then the model, only for signal-bearing messages the rules didn't resolve. "had 
 **event**, not a fact about a person, and never reaches the model.
 `test_the_gate_runs_before_any_model_call` asserts exactly that — the saving comes from not asking,
 not from the model answering "none".
+
+**Shorthand is learned three ways, and scoped to the meal.** "my usual is 2 parathas" states
+it. "remember this dinner as my usual" *references* it — naming no food at all, pointing at what
+was just logged — which is how people actually say it, and which means the alias has to be built
+from the log rather than parsed from the sentence. And three identical breakfasts infer it.
+
+Aliases are **per slot**: "my usual" means porridge at 8am and something else at 8pm, so the same
+phrase holds one entry per slot plus an unscoped fallback. That fallback matters — someone who
+grazes will not have a usual for every slot, and an empty answer helps nobody. Habits are counted
+per slot too, and a slot named in the message beats the one inferred from the clock.
+
+A dinner is also not one INSERT: log the naan and curry, then add the rice you forgot, and that is
+two rows and one dinner. "remember this dinner" collects the whole slot.
 
 **"same as yesterday" is not memory — it's a database query.** "my usual" is memory. The brief
 groups them; separating them is why there's no vector store here.
@@ -469,7 +482,7 @@ rejection is worth more than an assumed one.
 ## Testing and evals
 
 ```bash
-pytest tests/ -q                             # 98 tests
+pytest tests/ -q                             # 146 tests
 python evals/run_evals.py                    # 21 cases, 77 assertions
 python evals/run_evals.py --no-fast-path     # same, with the short-circuit off
 python evals/run_evals.py --backend groq     # score a real model
