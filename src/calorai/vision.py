@@ -30,6 +30,7 @@ instead of a photo-meal plus a text-meal.
 from __future__ import annotations
 
 import base64
+import io
 import mimetypes
 from pathlib import Path
 
@@ -69,15 +70,26 @@ Return only the structured result."""
 
 _CAPTION_RULE = """\
 
-6. THE CAPTION BELOW DESCRIBES THIS SAME PLATE. It is not a second meal. Apply \
-it as a constraint on what you just estimated -- if it says the person ate half, \
-halve the portions; if it names a dish, trust it over your own guess and raise \
-id_confidence.
+6. THE CAPTION BELOW DESCRIBES THIS SAME PLATE. It is not a second meal.
+   Use it to help you IDENTIFY the food -- if it names a dish, trust it over \
+your own guess and raise id_confidence.
+   Do NOT adjust the amounts for it. If it says the person only ate part of the \
+plate, still report what is VISIBLE ON THE PLATE; the sharing fraction is \
+applied afterwards.
 
    Caption: "{caption}"
 """
 
 _NO_CAPTION_RULE = ""
+
+
+#: Longest edge sent to the vision model. Phone photos are 3-12MP, and uploading
+#: one is most of the image path's latency -- a 2.3MB plate measured ~11s
+#: end to end, most of it transfer. Vision models tile images internally at a
+#: few hundred pixels anyway, so past roughly this size you are paying to send
+#: detail the model discards. Identifying dal in a bowl does not need 12MP.
+MAX_EDGE_PX = 768
+JPEG_QUALITY = 85
 
 
 def _encode(path: str | Path) -> tuple[str, str]:
@@ -87,8 +99,34 @@ def _encode(path: str | Path) -> tuple[str, str]:
     size = file_path.stat().st_size
     if size > MAX_IMAGE_BYTES:
         raise ValueError(f"image is {size / 1e6:.1f}MB; limit is {MAX_IMAGE_BYTES / 1e6:.0f}MB")
+
+    downscaled = _downscale(file_path)
+    if downscaled is not None:
+        return base64.b64encode(downscaled).decode("ascii"), "image/jpeg"
+
     mime = mimetypes.guess_type(str(file_path))[0] or "image/jpeg"
     return base64.b64encode(file_path.read_bytes()).decode("ascii"), mime
+
+
+def _downscale(file_path: Path) -> bytes | None:
+    """Shrink to MAX_EDGE_PX. Returns None if Pillow is missing or the image is
+    already small, in which case the original bytes are sent unchanged -- this
+    is an optimisation, never a hard dependency."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        with Image.open(file_path) as img:
+            if max(img.size) <= MAX_EDGE_PX and file_path.stat().st_size < 400_000:
+                return None
+            img = img.convert("RGB")
+            img.thumbnail((MAX_EDGE_PX, MAX_EDGE_PX), Image.LANCZOS)
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            return buffer.getvalue()
+    except Exception:
+        return None
 
 
 def build_prompt(caption: str | None, priors: str | None) -> str:
@@ -140,13 +178,17 @@ _PORTION_WORDS: list[tuple[str, float]] = [
 
 
 def apply_caption_multiplier(analysis: PlateAnalysis, caption: str | None) -> PlateAnalysis:
-    """Belt-and-braces on top of the prompt instruction.
+    """Apply "half of this was my brother's" to the portions -- in code, once.
 
-    The model is told to apply the caption, but "half of this was my brother's"
-    is the single most consequential caption in the brief, so the multiplier is
-    also enforced in code. If the model already halved the portions this is a
-    no-op, because we only scale down when the caption clearly says a fraction
-    was not eaten and the model's own numbers do not already reflect it.
+    Responsibility is split deliberately: the model reads the caption for
+    *identification* only and reports what is visible on the plate, and the
+    sharing fraction is applied here.
+
+    An earlier version had the model apply the fraction *and* multiplied again
+    here, on the theory that belt-and-braces was safe. It was not: against a
+    real photo the model halved some items itself, so those got halved twice and
+    came back at a quarter while others sat at a half. One meal, two different
+    fractions, silently wrong. Arithmetic belongs in exactly one place.
     """
     if not caption:
         return analysis

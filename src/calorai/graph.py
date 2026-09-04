@@ -422,6 +422,89 @@ def _describe_plate(analysis: dict[str, Any]) -> str:
     )
 
 
+def _initial_state(user_id: str, text: str, image_path: str | None) -> AgentState:
+    # A photo with a caption is ONE message, not two. Keeping them in a single
+    # HumanMessage is what stops the two models producing two meals.
+    return {
+        "messages": [HumanMessage(content=text or ("[sent a photo]" if image_path else ""))],
+        "user_id": user_id,
+        "image_path": image_path,
+        "caption": text or None,
+        "spans": {},
+    }
+
+
+def stream_turn(
+    conn: sqlite3.Connection,
+    user_id: str,
+    text: str,
+    image_path: str | None = None,
+    graph=None,
+):
+    """Same turn as `run_turn`, yielding the reply as it is generated.
+
+    Yields ("token", str) as words arrive, then ("done", result) with the same
+    shape run_turn returns.
+
+    Worth streaming because time-to-first-token, not total time, is what a
+    person waiting on a message actually feels: a 900ms reply that starts
+    appearing at 250ms reads as fast, and the identical reply delivered in one
+    lump at 900ms reads as a pause. The tool-deciding call produces no visible
+    text -- only the final phrasing call does -- so what streams is exactly the
+    sentence the user reads.
+    """
+    graph = graph or build_graph(conn, user_id, streaming=True)
+    started = time.perf_counter()
+    ttft: float | None = None
+    final: dict[str, Any] | None = None
+
+    for mode, payload in graph.stream(
+        _initial_state(user_id, text, image_path), stream_mode=["messages", "values"]
+    ):
+        if mode == "values":
+            final = payload
+            continue
+        chunk = payload[0] if isinstance(payload, tuple) else payload
+        piece = getattr(chunk, "content", "")
+        if isinstance(piece, list):  # some providers emit content blocks
+            piece = "".join(b.get("text", "") for b in piece if isinstance(b, dict))
+        if not piece:
+            continue
+        if ttft is None:
+            ttft = time.perf_counter() - started
+        yield "token", piece
+
+    result = _collect(final or {}, time.perf_counter() - started)
+    result["ttft"] = ttft
+    yield "done", result
+
+
+def _collect(state: dict[str, Any], elapsed: float) -> dict[str, Any]:
+    messages = state.get("messages", [])
+    reply = ""
+    for message in reversed(messages):
+        if isinstance(message, AIMessage) and message.content:
+            content = message.content
+            if isinstance(content, list):
+                content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+            reply = str(content)
+            break
+    return {
+        "reply": reply,
+        "elapsed": elapsed,
+        "spans": state.get("spans", {}),
+        "used_fast_path": bool(state.get("short_circuit")),
+        "plate_analysis": state.get("plate_analysis"),
+        "tool_calls": [
+            call["name"]
+            for message in messages
+            if isinstance(message, AIMessage)
+            for call in (getattr(message, "tool_calls", None) or [])
+        ],
+        "messages": messages,
+    }
+
+
 def run_turn(
     conn: sqlite3.Connection,
     user_id: str,
@@ -432,37 +515,5 @@ def run_turn(
     """One synchronous turn. Returns the reply plus per-stage timings."""
     graph = graph or build_graph(conn, user_id)
     started = time.perf_counter()
-
-    # A photo with a caption is ONE message, not two. Keeping them in a single
-    # HumanMessage is what stops the models producing two meals.
-    content = text or ("[sent a photo]" if image_path else "")
-    state: AgentState = {
-        "messages": [HumanMessage(content=content)],
-        "user_id": user_id,
-        "image_path": image_path,
-        "caption": text or None,
-        "spans": {},
-    }
-    result = graph.invoke(state)
-    elapsed = time.perf_counter() - started
-
-    reply = ""
-    for message in reversed(result["messages"]):
-        if isinstance(message, AIMessage) and message.content:
-            reply = str(message.content)
-            break
-
-    return {
-        "reply": reply,
-        "elapsed": elapsed,
-        "spans": result.get("spans", {}),
-        "used_fast_path": bool(result.get("short_circuit")),
-        "plate_analysis": result.get("plate_analysis"),
-        "tool_calls": [
-            call["name"]
-            for message in result["messages"]
-            if isinstance(message, AIMessage)
-            for call in (getattr(message, "tool_calls", None) or [])
-        ],
-        "messages": result["messages"],
-    }
+    result = graph.invoke(_initial_state(user_id, text, image_path))
+    return _collect(result, time.perf_counter() - started)

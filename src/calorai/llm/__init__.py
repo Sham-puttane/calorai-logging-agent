@@ -102,6 +102,14 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
             model=os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash-lite"),
             google_api_key=_require("GOOGLE_API_KEY", "gemini"),
             temperature=0.2,
+            # Same lesson as Groq, learned the same way. Left at its defaults
+            # this client answered a rate-limited image in 228 SECONDS -- it
+            # was not slow inference, it was backoff retrying behind a 429 with
+            # no way for the caller to see it. A photo that cannot be read in
+            # 25s is a photo the user should be told about, not one they wait
+            # four minutes for.
+            max_retries=0,
+            timeout=25,
         )
 
     if backend == "ollama":

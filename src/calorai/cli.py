@@ -30,7 +30,7 @@ from rich.panel import Panel  # noqa: E402
 
 from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
-from calorai.graph import build_graph, run_turn  # noqa: E402
+from calorai.graph import build_graph, run_turn, stream_turn  # noqa: E402
 from calorai.llm import active_backends  # noqa: E402
 from calorai.memory import extractor, render  # noqa: E402
 
@@ -79,6 +79,7 @@ def main() -> None:
     parser.add_argument("--user", default="default", help="user id (sessions are isolated)")
     parser.add_argument("--db", default=os.environ.get("CALORAI_DB_PATH", "calorai.db"))
     parser.add_argument("--no-fast-path", action="store_true", help="force every turn through the agent")
+    parser.add_argument("--no-stream", action="store_true", help="wait for the whole reply instead of streaming it")
     args = parser.parse_args()
 
     if args.no_fast_path:
@@ -102,7 +103,7 @@ def main() -> None:
             "in .env for real replies and meaningful timings[/yellow]\n"
         )
 
-    graph = build_graph(conn, args.user)
+    graph = build_graph(conn, args.user, streaming=not args.no_stream)
     last: dict = {}
 
     while True:
@@ -153,14 +154,34 @@ def main() -> None:
 
         started = time.perf_counter()
         try:
-            last = run_turn(conn, args.user, caption, image_path=image_path, graph=graph)
+            if args.no_stream:
+                last = run_turn(conn, args.user, caption, image_path=image_path, graph=graph)
+                console.print(f"[bold green]calorai ›[/bold green] {last['reply']}")
+            else:
+                # Print tokens as they arrive. What the user feels is the moment
+                # the first word appears, not the moment the last one does.
+                console.print("[bold green]calorai ›[/bold green] ", end="")
+                printed = False
+                for kind, payload in stream_turn(
+                    conn, args.user, caption, image_path=image_path, graph=graph
+                ):
+                    if kind == "token":
+                        console.print(payload, end="", highlight=False, markup=False)
+                        printed = True
+                    else:
+                        last = payload
+                if not printed:
+                    console.print(last.get("reply", ""), end="", markup=False)
+                console.print()
         except Exception as exc:  # noqa: BLE001
-            console.print(f"[red]turn failed:[/red] {exc}")
+            console.print(f"\n[red]turn failed:[/red] {exc}")
             continue
         elapsed_ms = (time.perf_counter() - started) * 1000
 
-        console.print(f"[bold green]calorai ›[/bold green] {last['reply']}")
-        console.print(f"[dim]{elapsed_ms:.0f} ms{' · fast path' if last['used_fast_path'] else ''}[/dim]\n")
+        timing = f"{elapsed_ms:.0f} ms"
+        if last.get("ttft"):
+            timing = f"{last['ttft'] * 1000:.0f} ms to first word · {timing} total"
+        console.print(f"[dim]{timing}{' · fast path' if last['used_fast_path'] else ''}[/dim]\n")
 
         repo.transcript_append(conn, args.user, "user", caption or "[photo]")
         repo.transcript_append(conn, args.user, "assistant", last["reply"])

@@ -12,5 +12,6 @@ langchain-ollama>=0.2.0          # optional zero-key local backend
 pydantic>=2.5
 python-dotenv>=1.0
 PyYAML>=6.0
+Pillow>=10.0            # downscales photos before upload; optional at runtime
 rich>=13.0
 pytest>=8.0
