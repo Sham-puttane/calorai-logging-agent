@@ -562,6 +562,13 @@ catches a regression, rather than trusting that it would.
 
 ### LangSmith tracing
 
+**Public trace of the correction turn:**
+https://smith.langchain.com/public/de49189b-4278-407d-a884-6d296f55a787/r
+
+That one is worth opening because it shows the whole argument in one screen: the `agent` node
+decides, `correct_meal` fires — **not** `log_meal` — and the run ends. The tool boundary that makes
+double-counting impossible is visible as a tree rather than asserted in prose.
+
 Free Developer tier — 5,000 traces/month, one seat, no credit card. In `.env`:
 
 ```bash

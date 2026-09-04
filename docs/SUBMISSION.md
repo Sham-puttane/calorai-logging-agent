@@ -92,6 +92,7 @@ before sending.
 - [ ] GitHub repo link (public)
 - [ ] Video link (Loom / YouTube unlisted / Drive)
 - [ ] Any notes for them
+- [ ] LangSmith public trace link (already in the README)
 
 ---
 

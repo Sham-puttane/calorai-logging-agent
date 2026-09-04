@@ -81,6 +81,17 @@ my usual         → logs the dinner learned last session
 /history         → meals live here; /memory holds only facts and the alias
 ```
 
+## Tracing — worth 20 seconds on camera
+
+The CLI banner and the sidebar both say whether tracing is really on:
+`tracing on -> project 'calorai-agent'`. Open the public trace after the correction turn:
+
+https://smith.langchain.com/public/de49189b-4278-407d-a884-6d296f55a787/r
+
+> "That's the correction turn. You can see the agent node decide, then `correct_meal` fire — and
+> `log_meal` not fire. The tool boundary that makes double counting impossible is a tree you can
+> look at, not a claim I'm making."
+
 ## Multi-user, in two clicks
 
 Change the sidebar user to any new name: zero calories, empty memory. Change it back: everything
