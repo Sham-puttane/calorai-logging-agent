@@ -210,7 +210,7 @@ what I consciously didn't:
 | **Payload reduction** | **Adopted, then tuned.** Photos go out at 512 px — A/B'd at four calls each, median 4601 ms against 768 px's 6549 ms. 384 px was *slower*, which is the tell that latency tracks generated tokens rather than image size. |
 | **Implicit prefix caching** | **Adopted passively.** Gemini 2.5+ caches repeated prefixes automatically on the free tier, so the static system prompt is deliberately placed *first* in the preamble and the per-user memory block after it, which keeps the longest possible prefix stable across turns. |
 | **Streaming** | **Adopted.** Doesn't reduce total time, but TTFT is what a person waiting on a message feels. |
-| **Speculative tool calling** — a draft model predicting the next tool so execution overlaps generation | **Deferred.** The literature reports 2–5× on long tool chains, but this agent's turns are 1–2 tool calls, so there's very little sequential bottleneck to hide. It would add a second model call per turn to a system whose binding constraint is tokens per minute. Wrong optimisation for this shape of workload. |
+| **Speculative tool calling** — a draft model predicting the next tool so execution overlaps generation | **Deferred.** The literature reports 2–5× on long tool chains, but this agent's turns are 1–2 tool calls, so there's very little sequential bottleneck to hide. It would add a second model call per turn to a system whose binding constraint is tokens per day. Wrong optimisation for this shape of workload. |
 | **Explicit context caching** | **Deferred.** Guarantees the discount but adds a storage meter that needs a paid account, and the literature is clear that cache creation only pays off if the prefix is reused enough. Implicit caching gets most of it for free. |
 
 ### Why the vision prompt looks the way it does
@@ -379,44 +379,90 @@ Written down rather than left to the model's mood:
 
 ## Latency
 
-Measured on the real stack: Groq `openai/gpt-oss-20b` for text, Gemini `gemini-2.5-flash-lite` for
-vision. Reproduce with `python bench/latency.py --n 20 --delay 8`; the raw report lands in
-`bench/results/latest.json`.
+Every number here was measured against live providers, by one of two harnesses:
+`bench/latency.py` for percentiles, and `bench/_real_e2e.py`, which walks the brief's whole
+conversation and prints the database after every turn. The raw runs are committed under
+[`bench/results/`](bench/results/) with a note on each one's provenance -- including what is missing
+and why -- and every file names the models it used. Nothing below is estimated.
+
+### Text path — measured on both providers, not just the fast one
+
+| provider | model | measured by | n | **p50** | **p95** |
+|---|---|---|---|---|---|
+| **Groq** — primary | `openai/gpt-oss-20b` | `bench/latency.py` | 20 | **766 ms** | **1257 ms** |
+| **OpenRouter** — failover | `ling-3.0-flash-fin:free` | `bench/_real_e2e.py`, full conversation | 12 | **2212 ms** | — |
+
+Groq is ~3× faster, which is why it is primary. The failover row is here because it is what the demo
+actually runs on once Groq's daily budget is spent, and a failover whose latency you have never
+measured is a failover you are guessing about. 2.2 s is worse but still inside conversational range,
+so the degradation is graceful rather than a cliff.
+
+The two rows come from different harnesses, which is a limitation rather than a choice: by the time
+I had a failover worth measuring I had spent the day's budget on all three text providers, so the
+failover figure is the p50 of a real twelve-turn conversation instead of a percentile sweep. It is
+an honest number and a smaller sample; a p95 for it is still owed.
+
+**The failover model was chosen on correctness, not speed.** The default here was
+`meta-llama/llama-3.3-70b-instruct` until I ran the whole conversation through it rather than a
+single call. It benchmarked *faster* than the model that replaced it on the turns it got right —
+p50 2504 ms, p95 4644 ms over 16 — and it was still the wrong choice:
+
+- `"skipped lunch but grazed all afternoon"` → **no tool call at all**, and the reply was
+  *"roughly 170 for assorted snacks"*. A confident confirmation for a write that never happened is
+  the worst failure this product has, because the user has no reason to check.
+- `"leftover biryani, maybe two thirds of the box"` → two `log_meal` calls, database unchanged.
+- Two turns returned an empty reply.
+
+A ping would have passed. A single-call latency probe did pass — that is how it became the default.
+Only walking the whole conversation and printing the database after every turn caught it, which is
+the argument for `bench/_real_e2e.py` existing next to the percentile benchmark at all: **it asserts
+what was written, not what was said.**
+
+
+### Image path — Mistral `pixtral-12b-2409`, 512 px
 
 | path | n | **p50** | **p95** | mean | max | throttled |
 |---|---|---|---|---|---|---|
-| **text** | 20 | **766 ms** | **1257 ms** | 661 ms | 1289 ms | 0 / 20 |
-| **image** | 8 | **6061 ms** | **13709 ms** | 7396 ms | 15583 ms | 0 / 8 |
+| **image** | 8 | **5864 ms** | **6837 ms** | 5652 ms | 7098 ms | 0 / 8 |
 
-Cold start (first call, includes client construction and TLS): **924 ms**.
+Cold start (first call, includes client construction and TLS): **1159 ms**.
 
 | path | stage p50 |
 |---|---|
 | text | `agent` 790 ms · `ingest` 0.2 ms |
-| image | `vision` 6053 ms · `agent` 783 ms · `ingest` 0.2 ms |
-
-The fast path served **20%** of text turns, in 2–23 ms with no model call.
+| image | `vision` 5846 ms · `agent` 783 ms · `ingest` 0.5 ms |
 
 **Reading the text row:** the agent's own overhead — alias resolution, memory load, routing — is
 **sub-millisecond**. Essentially all of p50 is the model round trip, which is where it should be,
-and p95 is only 1.6× p50, so there's no tail hiding in the loop.
+and p95 is only 1.6× p50, so there is no tail hiding in the loop.
 
-**Reading the image row:** it is genuinely slower, and honestly so. The vision call is ~6 s of the
-~6.5 s total — sending an image and getting structured JSON back is a bigger unit of work than a
-text turn, and the agent's share is under a second. Resolution is tuned (512 px, measured against
-768 and 384); the next lever is a tighter output schema, because latency here tracks the JSON the
-model generates more than the picture it is sent.
+**Reading the image row:** it is genuinely slower, and honestly so. The vision call is 5.8 s of the
+5.9 s total; the agent's share is under a second. Sending an image and getting structured JSON back
+is a bigger unit of work than a text turn. Resolution is tuned (512 px, A/B'd against 768 and 384);
+the next lever is a tighter output schema, because latency here tracks the JSON the model generates
+more than the picture it is sent.
 
-**What that `throttled` column is doing there.** An earlier run of this same benchmark, with Gemini
-as the primary vision model, produced a p95 of **25.1 s** — which was not inference at all, it was
-the client timeout firing on rate-limited calls. Switching to Pixtral and keeping Gemini as failover
-more than halved p95 to 11.3 s. The 3-in-10 throttles that remain are Groq's tokens-per-minute cap
-on the *text* half of the image turn.
+**p95 came down 13.7 s → 6.8 s by deleting a fallback.** With Gemini configured as vision failover,
+a throttled Gemini attempt was being paid for *before* Pixtral answered — so the tail was a dead
+provider's timeout, not inference. Setting `CALORAI_VISION_FALLBACK=none` once Gemini's daily quota
+was exhausted took p95 from 13709 ms to 6837 ms and p50 from 6061 to 5864. A fallback to a provider
+that is out of quota is worse than no fallback, which is not obvious until you measure it.
 
 A turn that got throttled and returned a graceful "i'm being rate limited" is counted as
-**throttled, not as a fast success** — otherwise a rate limit would quietly flatter the
-percentiles. I'd rather show the ugly number with an explanation than drop the samples that made it
-ugly.
+**throttled, not as a fast success** — otherwise a rate limit would quietly flatter the percentiles.
+I would rather show the ugly number with an explanation than drop the samples that made it ugly.
+
+The fast path served **20%** of text turns on Groq and **25%** on OpenRouter, in 2–23 ms with no
+model call at all.
+
+Reproduce any of it:
+
+```bash
+python bench/latency.py --n 20 --delay 8                          # both paths
+python bench/latency.py --n 16 --delay 4 --skip-image --backend openrouter
+python bench/_real_e2e.py --delay 5                               # the whole conversation, per-turn
+```
+
 
 ### What I did to get there
 
@@ -444,17 +490,32 @@ Ordered by how much they actually bought:
 
 ### What I couldn't fix, honestly
 
-**The binding constraint is not latency, it's tokens per minute.** Groq's free tier caps TPM (~8k)
-and this agent spends ~1.1k tokens a turn, so sustained use throttles after a handful of turns.
-Gemini's free tier has a daily cap I exhausted while benchmarking. That's why the benchmark has a
-`--delay` flag and reports a throttled count: firing 30 turns back-to-back measures the rate
-limiter, not the agent. **The p50 above is the agent's real speed at 8s spacing; the throttled count
-is the free tier's real ceiling.** Unpaced, expect roughly one throttled turn in three. On a paid
-tier this disappears; on a free one it's the dominant fact, and pretending otherwise would make the
-numbers a lie.
+**The binding constraint is not latency, it's tokens per day.** I had this wrong for most of the
+project and the correction is worth writing down, because it changed what I optimised.
 
-Token reduction is therefore a *correctness* lever here, not only a cost one — which is why #3 was
-worth doing.
+The visible limit is per-minute: Groq's free tier caps TPM at ~8k and this agent spends ~1.1k tokens
+a turn, so unpaced bursts throttle after a handful of turns. That is what the `--delay` flag and the
+throttled count in the benchmark exist for — firing 30 turns back-to-back measures the rate limiter,
+not the agent.
+
+The limit that actually stopped work is the **daily** one: 200,000 tokens per day, which a real
+build-and-test session exhausts. Its failure mode is genuinely misleading. The per-minute headers
+stay healthy the whole time, so a trivial "say OK" probe returns 200 at the exact moment every real
+turn is failing — I told myself the stack was healthy on the strength of a 5-token probe while a
+20-turn benchmark was throttling 16 of its turns. **A health check has to spend what a real request
+spends, or it is measuring a different system.**
+
+Two consequences, both in the repo rather than in prose:
+
+- Token reduction is a *correctness* lever here, not only a cost one. Dropping tool schemas from the
+  reply call (36% fewer tokens) directly buys usable turns per day.
+- Failover across *providers* is load-bearing rather than decorative, and it is why the OpenRouter
+  row is in the latency table above. When the primary is out of budget the choice is not "fast or
+  slow", it is "2.5 seconds or nothing".
+
+On a paid tier all of this disappears. On a free one it is the dominant fact, and pretending
+otherwise would make the numbers a lie.
+
 
 ### Local inference: actually measured, then rejected
 
@@ -531,10 +592,24 @@ database**. It proves the plumbing and the data correctness. It proves **nothing
 behaviour, and it never appears in a latency number.
 
 That distinction was not academic. Running the brief's conversation set against real models found
-five bugs the mock could not have surfaced: the two thinking-model latency traps, a fraction parsed
+six bugs the mock could not have surfaced: the two thinking-model latency traps, a fraction parsed
 as a count, the agent claiming it had logged a meal it had only looked up, and — my favourite — the
 model **parroting the example in my own system prompt verbatim**, reporting *"3 rotis and a chai"*
 after correcting rotis. Examples with memorable numbers get copied. The example is gone.
+
+The sixth was found last and is the one I would lead with. The **failover** provider was pointed at
+a model I had verified with a single call, and across the full conversation it confirmed meals it
+had never written — *"roughly 170 for assorted snacks"* with no tool call behind it. The mock cannot
+find this, because the mock always calls the tool. Neither can a unit test, because the tool is
+correct. Neither can a latency benchmark, which is how it got installed as the default: it was
+*faster* than the model that replaced it.
+
+Only a harness that walks the whole conversation and prints the database after every turn catches
+it, which is why [`bench/_real_e2e.py`](bench/_real_e2e.py) exists beside the percentile benchmark.
+The generalisation I would defend: **a health check has to spend what a real request spends.** The
+same lesson arrived twice in this project from opposite directions — a 5-token "say OK" probe
+returning 200 while every real turn failed on the daily token cap, and a single-call latency probe
+passing on a model that could not hold a conversation.
 
 ---
 
@@ -654,7 +729,12 @@ need.
 
 ## Time breakdown
 
-Roughly 8 hours.
+**Roughly 9 hours of active work, spread across an 18-hour window.** The brief says 6–8, so this
+went over — about an hour, and it is worth saying where it went rather than rounding down.
+
+Git gives the outer bound honestly: first commit 22:06, last 16:13 the following day. Wall clock is
+18 hours; the commit timestamps cluster into three working blocks (one late evening, two the next
+day) with sleep and a gap between them.
 
 | | |
 |---|---|
@@ -664,12 +744,19 @@ Roughly 8 hours.
 | Memory: stores, extractor, rendering | 0:50 |
 | Agent graph, tools, vision path | 1:15 |
 | Mock backend + eval suite | 1:00 |
-| **Real-model integration and debugging** | **1:30** |
-| Benchmark, orchestration tests, README | 1:00 |
+| **Real-model integration and debugging** | **2:15** |
+| Benchmark, orchestration tests, README | 1:15 |
 
-The largest single line is real-model debugging, and that's the honest shape of this work: the code
-was written in a few hours and then *earned* over another ninety minutes of reading transcripts and
-finding out which assumptions were wrong.
+**The overrun is entirely in one line.** Real-model debugging was budgeted at 1:30 and took 2:15,
+because every bug in it was one the offline mock structurally could not surface: the model parroting
+an example out of my own system prompt, a portion multiplier applied twice because prompt and code
+were both "being safe", a degraded-path reply saying *"nothing was saved"* over a row that had
+saved, and — in the last hour — a failover model confirming meals it never wrote.
+
+I could have stopped at 8 hours with a README claiming a working failover. The extra hour is what
+turned that claim into a tested one, and it found the worst bug in the project. That trade seemed
+worth making, but it was a choice, and the brief asked me to be straight about it.
+
 
 ---
 
@@ -684,7 +771,7 @@ finding out which assumptions were wrong.
    today; a one-tap "that right?" would catch vision errors before they enter the totals.
 3. **Prompt caching.** The system prompt and tool schemas are identical every call. Gemini 2.5+
    does this implicitly and the preamble is already ordered to benefit, but explicit caching on a
-   paid tier would remove most of the fixed cost — which on a TPM-limited tier converts directly
+   paid tier would remove most of the fixed cost — which on a token-limited tier converts directly
    into more usable turns.
 4. **Better correction targeting.** `_find_recent_item` matches on normalised name overlap. Right
    for the cases tested, but it would mis-target "the second one", or two similar foods in one

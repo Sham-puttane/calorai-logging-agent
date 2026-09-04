@@ -26,7 +26,7 @@ videos fail.
 ## Pre-flight — all four
 
 ```bash
-pytest tests/ -q                  # 177 passed
+pytest tests/ -q                  # 178 passed
 python evals/run_evals.py         # 21/21 cases, 77/77 assertions
 python bench\_real_e2e.py --delay 3
 del calorai.db                    # start from zero
@@ -103,13 +103,30 @@ physically cannot address another user's rows.
 ```bash
 CALORAI_TEXT_BACKEND=openrouter     # or groq | mistral
 CALORAI_VISION_BACKEND=mistral-vision
+CALORAI_VISION_FALLBACK=none        # Gemini's daily quota is spent; leaving it
+                                    # set pays for a dead attempt before Pixtral
 ```
+
+**Check the model, not just the provider, before you switch.** `OPENROUTER_MODEL` must be
+`inclusionai/ling-3.0-flash-fin:free`. On `llama-3.3-70b-instruct` the agent confirms meals it never
+wrote — it is fast and it lies, which on camera looks like the product working right up until you
+check the sidebar.
 
 | Symptom | Do this |
 |---|---|
-| `i'm being rate limited` on text | switch `CALORAI_TEXT_BACKEND` to `mistral`, restart Streamlit |
+| `i'm being rate limited` on text | switch `CALORAI_TEXT_BACKEND` to `openrouter`, restart Streamlit |
 | `rate limited on photos` | wait ~30 s — Pixtral limits per second, not per day |
-| Everything throttled | Groq is at its 200k tokens/day cap; use `openrouter` |
+| Everything throttled | all three text providers are at their daily caps. `CALORAI_TEXT_BACKEND=mock` still demonstrates the graph, tools, memory and totals end to end with no network — say so on camera rather than fighting it |
+
+Confirm the whole conversation actually works on whatever you switched to, rather than trusting one
+reply — this is exactly the check that caught the lying model:
+
+```bash
+python bench/_real_e2e.py --delay 5
+```
+
+Read the `db:` line under every turn. A reply that sounds right above an unchanged `db:` line is the
+failure worth catching before you record.
 
 ---
 
@@ -214,7 +231,7 @@ pytest tests/ -q
 python evals/run_evals.py
 ```
 
-> "177 tests and 21 eval cases, and both run on a clean clone with no API keys, because there's a
+> "178 tests and 21 eval cases, and both run on a clean clone with no API keys, because there's a
 > deterministic offline backend. Eleven of those come straight from your test set — you can see
 > them named as they pass."
 
@@ -224,7 +241,14 @@ python evals/run_evals.py
 Switch to the board's **latency** and **bugs** sections:
 
 > "Text p50 766 milliseconds, p95 1257. The agent's own overhead is sub-millisecond — basically all
-> of it is the model round trip."
+> of it is the model round trip. The image path is 5.9 seconds, and I'll come back to that."
+
+**Then the one worth telling as a story:**
+> "The image p95 was 13.7 seconds and I assumed that was inference. It wasn't. I had a second vision
+> provider configured as failover, and its daily quota was gone — so every photo was paying for a
+> dead provider's timeout before the working one ever got called. Deleting the fallback took p95 to
+> 6.8. A fallback to something that's out of quota is worse than no fallback, and you can't reason
+> your way to that. You have to look."
 
 > "Biggest win was `reasoning_effort=low`: gpt-oss is a reasoning model and two-tool turns were
 > taking twelve to twenty seconds."

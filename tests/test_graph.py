@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -508,3 +508,29 @@ def test_a_text_turn_has_no_status_noise(conn):
     graph = build_graph(conn, USER, streaming=True)
     kinds = {k for k, _ in stream_turn(conn, USER, "had 2 rotis", graph=graph)}
     assert "status" not in kinds
+
+
+def test_the_alias_hint_is_imperative_and_keeps_its_items_last(conn):
+    """Two constraints on one string, and they pull against each other.
+
+    The hint has to *order* the model to log rather than describe what the
+    shorthand means -- a passive "means: ..." note reads as background colour,
+    and on the failover model this turn spent four find_meals calls and logged
+    nothing. But the offline mock parses the same string, keying on the marker
+    phrase and capturing to the closing paren, so the item list has to stay
+    terminal. Rewording for the first constraint silently broke the second
+    once already; this asserts both at the same time.
+    """
+    store.put_alias(
+        conn, USER, "my usual",
+        [{"name": "paratha", "qty": 2, "unit": "piece"}, {"name": "chai", "qty": 1, "unit": "cup"}],
+    )
+    graph = build_graph(conn, USER)
+    state = graph.invoke(
+        {"messages": [HumanMessage(content="my usual")], "user_id": USER, "spans": {}}
+    )
+    hint = state["alias_expansion"]
+
+    assert "do NOT call find_meals" in hint
+    assert "log_meal" in hint
+    assert hint.rstrip().endswith("2 piece paratha, 1 cup chai)")

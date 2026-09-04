@@ -1,0 +1,44 @@
+{
+  "backends": {
+    "text": "groq (openai/gpt-oss-20b)",
+    "vision": "mistral-vision (pixtral-12b-2409)",
+    "fallback": "mistral"
+  },
+  "fast_path": "1",
+  "warmup_ms": 1159.2,
+  "mock": false,
+  "delay_s": 8.0,
+  "throttled": {
+    "text": 16,
+    "image": 0
+  },
+  "paths": [
+    {
+      "path": "text",
+      "n": 4,
+      "p50_ms": 13.9,
+      "p95_ms": 49.7,
+      "mean_ms": 22.7,
+      "min_ms": 7.4,
+      "max_ms": 55.7,
+      "stages_p50_ms": {
+        "ingest": 2.0
+      },
+      "fast_path_share": 1.0
+    },
+    {
+      "path": "image",
+      "n": 8,
+      "p50_ms": 5863.5,
+      "p95_ms": 6837.3,
+      "mean_ms": 5651.5,
+      "min_ms": 4551.8,
+      "max_ms": 7098.1,
+      "stages_p50_ms": {
+        "ingest": 0.5,
+        "vision": 5846.1
+      },
+      "fast_path_share": 0.0
+    }
+  ]
+}

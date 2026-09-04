@@ -287,7 +287,19 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
                 f"{i.get('qty', 1):g} {i.get('unit', '')} {i['name']}".strip()
                 for i in alias["items"]
             )
-            expansion = f'("{alias["phrase"]}" for this person means: {items})'
+            # Imperative, not a parenthetical aside. The lookup has already
+            # happened deterministically here in ingest, so the only correct
+            # next move is to log it -- but a weaker model reads a passive
+            # "means: ..." note as background colour and goes hunting anyway.
+            # Measured: on the failover model this exact turn burned four
+            # find_meals calls and logged nothing, while the identically
+            # placed but imperative photo hint worked on both models.
+            expansion = (
+                f'("{alias["phrase"]}" is learned shorthand and the lookup is already '
+                "done -- do NOT call find_meals for it. Unless they are asking a "
+                "question, call log_meal with exactly these items. "
+                f'"{alias["phrase"]}" for this person means: {items})'
+            )
 
         # 2. everything memory knows, rendered small -- plus what is already on
         #    the board today, so the agent stops asking about its own data

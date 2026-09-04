@@ -1,0 +1,31 @@
+{
+  "backends": {
+    "text": "ollama (qwen2.5:3b)",
+    "vision": "mistral-vision (pixtral-12b-2409)",
+    "fallback": "gemini"
+  },
+  "fast_path": "1",
+  "warmup_ms": 29066.7,
+  "mock": false,
+  "delay_s": 0.0,
+  "throttled": {
+    "text": 0,
+    "image": 0
+  },
+  "paths": [
+    {
+      "path": "text",
+      "n": 6,
+      "p50_ms": 8511.1,
+      "p95_ms": 19163.1,
+      "mean_ms": 8896.9,
+      "min_ms": 2.6,
+      "max_ms": 20159.9,
+      "stages_p50_ms": {
+        "agent": 14821.2,
+        "ingest": 0.1
+      },
+      "fast_path_share": 0.33
+    }
+  ]
+}

@@ -159,7 +159,15 @@ def build_text_model(backend: str, *, streaming: bool = False) -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct"),
+            # Not llama-3.3-70b-instruct, which was the default here until I ran
+            # the full conversation against it rather than a single call. It
+            # answered "roughly 170 for assorted snacks" having made no tool
+            # call at all -- a confident confirmation for a write that never
+            # happened, which is the worst failure this product has. It also
+            # emitted duplicate log_meal calls that wrote nothing and returned
+            # empty replies on two turns. Faster than nothing is not the axis;
+            # a failover that lies about what it saved is worse than an outage.
+            model=os.environ.get("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-fin:free"),
             api_key=_require("OPENROUTER_API_KEY", "openrouter"),
             base_url=OPENROUTER_BASE_URL,
             temperature=0.3,

@@ -1,0 +1,31 @@
+{
+  "backends": {
+    "text": "openrouter (meta-llama/llama-3.3-70b-instruct)",
+    "vision": "mistral-vision (pixtral-12b-2409)",
+    "fallback": "mistral"
+  },
+  "fast_path": "1",
+  "warmup_ms": 2155.9,
+  "mock": false,
+  "delay_s": 4.0,
+  "throttled": {
+    "text": 0,
+    "image": 0
+  },
+  "paths": [
+    {
+      "path": "text",
+      "n": 16,
+      "p50_ms": 2503.5,
+      "p95_ms": 4643.8,
+      "mean_ms": 2320.9,
+      "min_ms": 14.6,
+      "max_ms": 6145.2,
+      "stages_p50_ms": {
+        "agent": 2922.7,
+        "ingest": 0.9
+      },
+      "fast_path_share": 0.25
+    }
+  ]
+}
