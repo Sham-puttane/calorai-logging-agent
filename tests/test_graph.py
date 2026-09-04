@@ -86,7 +86,8 @@ def test_text_message_routes_through_the_agent(conn):
     assert "vision" not in result["spans"]
 
 
-def test_image_routes_through_vision_before_the_agent(conn):
+def test_image_routes_through_vision_before_the_agent(conn, monkeypatch):
+    monkeypatch.setenv("CALORAI_CONFIRM_PHOTOS", "0")
     result = run_turn(conn, USER, "", image_path="images/plate.jpg")
     assert "vision" in result["spans"], "the vision node must run for an image"
     assert "agent" in result["spans"], "and hand off to the text agent"
@@ -344,14 +345,81 @@ def test_empty_message_is_harmless(conn):
 # ===========================================================================
 # the multimodal invariant
 # ===========================================================================
-def test_photo_plus_caption_produces_exactly_one_meal(conn):
+def test_photo_plus_caption_produces_exactly_one_meal(conn, monkeypatch):
     """The headline multimodal requirement: two models, one meal. A second
     meal row here would mean the caption was logged separately."""
+    monkeypatch.setenv("CALORAI_CONFIRM_PHOTOS", "0")
     result = run_turn(conn, USER, "half of this was my brother's", image_path="images/plate.jpg")
 
     assert result["tool_calls"].count("log_meal") == 1
     assert meal_count(conn) == 1, "one meal, not one per model"
     assert live_items(conn) == 3
+
+
+# ===========================================================================
+# confirm before writing a photo
+# ===========================================================================
+def test_a_photo_is_not_logged_until_confirmed(conn):
+    """A photo hands the whole description to a model, and a vision model can
+    be confidently wrong in ways the user sees instantly -- against a real
+    thali it reported four naan where there was one. So the totals do not move
+    until the person says so."""
+    result = run_turn(conn, USER, "", image_path="images/plate.jpg")
+
+    assert result["tool_calls"] == [], "nothing may be written before a yes"
+    assert live_items(conn) == 0
+    assert repo.daily_totals(conn, USER)["kcal"] == 0
+    assert "?" in result["reply"], "it has to actually ask"
+
+
+def test_the_photo_is_held_for_the_next_turn(conn):
+    from calorai import repository
+
+    run_turn(conn, USER, "", image_path="images/plate.jpg")
+    pending = repository.get_pending(conn, USER)
+
+    assert pending is not None
+    assert {i["name"] for i in pending["items"]} == {"rice", "dal", "paneer"}
+
+
+def test_confirming_logs_exactly_what_was_shown(conn):
+    graph = build_graph(conn, USER)
+    run_turn(conn, USER, "", image_path="images/plate.jpg", graph=graph)
+    result = run_turn(conn, USER, "yes log it", graph=graph)
+
+    assert "log_meal" in result["tool_calls"]
+    assert live_items(conn) == 3
+    assert meal_count(conn) == 1, "still one meal, logged a turn later"
+
+
+def test_the_pending_photo_is_consumed_once(conn):
+    """After it has been shown to the model it is gone, so a stray "yeah" later
+    in the conversation cannot log a meal a second time."""
+    from calorai import repository
+
+    graph = build_graph(conn, USER)
+    run_turn(conn, USER, "", image_path="images/plate.jpg", graph=graph)
+    run_turn(conn, USER, "yes log it", graph=graph)
+
+    assert repository.get_pending(conn, USER) is None
+    before = repo.daily_totals(conn, USER)["kcal"]
+    run_turn(conn, USER, "yeah", graph=graph)
+    assert repo.daily_totals(conn, USER)["kcal"] == before, "no second write"
+
+
+def test_confirmation_can_be_turned_off(conn, monkeypatch):
+    monkeypatch.setenv("CALORAI_CONFIRM_PHOTOS", "0")
+    result = run_turn(conn, USER, "", image_path="images/plate.jpg")
+    assert "log_meal" in result["tool_calls"]
+    assert live_items(conn) == 3
+
+
+def test_an_unidentifiable_photo_asks_rather_than_confirming(conn):
+    """The confidence gate still wins: if it cannot tell what the food is,
+    the question is 'what is this', not 'shall I log this'."""
+    result = run_turn(conn, USER, "", image_path="images/ambiguous_plate.jpg")
+    assert "tofu" in result["reply"].lower()
+    assert live_items(conn) == 0
 
 
 def test_caption_fraction_halves_the_portions(conn):

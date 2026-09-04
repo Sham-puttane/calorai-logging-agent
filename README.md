@@ -39,8 +39,8 @@ is still there and still accurate if you prefer it — you'll just need `PYTHONP
 backend. To verify the clone before configuring anything:
 
 ```bash
-pytest tests/ -q                 # 83 tests
-python evals/run_evals.py        # 19 cases, 69 assertions
+pytest tests/ -q                 # 98 tests
+python evals/run_evals.py        # 21 cases, 77 assertions
 ```
 
 For real conversation, put free keys in `.env` (no credit card for either):
@@ -117,7 +117,7 @@ it only ever handles the phrasings someone thought to write a rule for.
 concrete food, loading memory, spotting an image.
 
 **The fast path is an optimisation, not the architecture.** It short-circuits only unambiguous
-read-only questions, and `CALORAI_FAST_PATH=0` disables it. The eval suite scores 19/19 with it
+read-only questions, and `CALORAI_FAST_PATH=0` disables it. The eval suite scores 21/21 with it
 **off**, so the agent earns every case on its own.
 
 Worth reading in order: [`graph.py`](src/calorai/graph.py) (the agent),
@@ -310,6 +310,32 @@ state, not a retrieval target).
 time. A correction or delete therefore *cannot* desynchronise a counter, because no counter exists.
 Deletes are soft, so edits stay auditable, and `edit_log` keeps before/after.
 
+### Photos are confirmed before they are written
+
+Typing "2 rotis" cannot be misread. A photo can, and is: against a real thali the vision model
+reported **four naan where there was one**, and a glass of water that was not in the frame. The
+user can see that instantly; the agent cannot see it at all.
+
+So a photo lands in `pending_meals` and the day's total does not move until the person says yes:
+
+```
+you › [photo]
+     i can see 1 naan, 1 katori rice, 1 katori curd. (measured against dinner plate ~27cm)
+     portions are a guess from the picture — want me to log that, or is something off?
+you › yeah but it was 1 naan not 4
+     logged 1 naan, 1 katori rice, 1 katori curd — you're at 355 for the day
+```
+
+This is the "surface uncertainty rather than silently guess" requirement taken seriously in two
+layers. The **confidence gate** catches what the model *knows* it is unsure about — low
+`id_confidence` produces "is that paneer or tofu?". Confirmation catches what it is **confidently
+wrong** about, which no threshold can detect, because the model's own certainty is the thing that
+failed.
+
+The pending photo is one-shot: consumed the moment it is shown to the model, and expired after 15
+minutes, so a stray "yeah" later in the conversation cannot log a meal that was never approved.
+`CALORAI_CONFIRM_PHOTOS=0` turns it off, and the evals cover both paths.
+
 ### When it asks, and when it doesn't
 
 Written down rather than left to the model's mood:
@@ -443,8 +469,8 @@ rejection is worth more than an assumed one.
 ## Testing and evals
 
 ```bash
-pytest tests/ -q                             # 83 tests
-python evals/run_evals.py                    # 19 cases, 69 assertions
+pytest tests/ -q                             # 98 tests
+python evals/run_evals.py                    # 21 cases, 77 assertions
 python evals/run_evals.py --no-fast-path     # same, with the short-circuit off
 python evals/run_evals.py --backend groq     # score a real model
 ```

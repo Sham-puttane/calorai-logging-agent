@@ -17,7 +17,7 @@ Quick update on the logging agent, plus one question you might have a view on.
 **Where it is.** The six core features are built and working end to end: a LangGraph tool-calling
 agent over six tools, SQLite persistence, running daily totals, a separate vision model for photos,
 persistent memory across sessions, and a written-down policy for when the agent asks versus when it
-just logs and states its assumption. There's an eval suite (19 cases covering all 11 messages from
+just logs and states its assumption. There's an eval suite (21 cases covering all 11 messages from
 your test set) and a latency benchmark. Both run on a clean clone with no API keys, via a
 deterministic offline backend, so nothing about verifying it depends on my credentials.
 

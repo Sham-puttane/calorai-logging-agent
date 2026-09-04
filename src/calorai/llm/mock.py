@@ -78,6 +78,14 @@ _LOG_INTENT_RE = re.compile(
     re.I,
 )
 
+# The pending-photo block ingest writes when a photo is awaiting a yes.
+_PENDING_BLOCK_RE = re.compile(r"they just sent showed:\s*(.+?)\.\s*This is NOT logged", re.S)
+_AFFIRMATIVE_RE = re.compile(
+    r"^\s*(yes|yep|yeah|yup|ok|okay|sure|log it|do it|correct|right|that'?s right"
+    r"|looks good|go ahead|confirm|please do)\b",
+    re.I,
+)
+
 # The alias expansion ingest writes:
 #   ("my usual" for this person means: 2 piece paratha, 1 cup chai)
 _ALIAS_BLOCK_RE = re.compile(r"for this person means:\s*(.+?)\)\s*$", re.S)
@@ -217,6 +225,14 @@ class MockChatModel(BaseChatModel):
                 "log_meal", {"items": plate, "slot": "", "note": "from photo"}
             )
 
+        # A photo is waiting on a yes. If this message is one, log exactly the
+        # items ingest put in context.
+        pending = self._pending_items(messages)
+        if pending and _AFFIRMATIVE_RE.match(text.strip()):
+            return self._call(
+                "log_meal", {"items": pending, "slot": "", "note": "confirmed photo"}
+            )
+
         # "my usual" was already expanded to concrete food by ingest, before
         # this model was ever called. Log what it resolved to.
         alias_items = self._alias_items(messages)
@@ -312,6 +328,22 @@ class MockChatModel(BaseChatModel):
                     {"name": name.strip(), "qty": float(qty), "unit": unit}
                     for qty, unit, name in _PLATE_ITEM_RE.findall(content)
                 ]
+        return []
+
+    def _pending_items(self, messages: list[BaseMessage]) -> list[dict[str, Any]]:
+        for message in reversed(messages):
+            content = str(getattr(message, "content", ""))
+            if isinstance(message, SystemMessage) and "they just sent showed:" in content:
+                block = _PENDING_BLOCK_RE.search(content)
+                if not block:
+                    return []
+                items = []
+                for chunk in block.group(1).split(","):
+                    parsed = _QTY_UNIT_NAME_RE.match(chunk)
+                    if parsed:
+                        qty, unit, name = parsed.groups()
+                        items.append({"name": name.strip(), "qty": float(qty), "unit": unit})
+                return items
         return []
 
     def _alias_items(self, messages: list[BaseMessage]) -> list[dict[str, Any]]:

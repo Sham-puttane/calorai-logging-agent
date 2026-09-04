@@ -70,6 +70,17 @@
     tools: [correct_meal]
     db: {kcal: 420, items: 1}
 
+- id: correction_changes_the_food_not_just_the_count
+  note: "'2 parathas' then 'actually that was 3 rotis not 2' -- update, never add"
+  setup_meals:
+    - {name: paratha, qty: 2, unit: piece}
+    - {name: chai, qty: 1, unit: cup}
+  message: actually that was 3 rotis not 2
+  expect:
+    tools: [correct_meal]
+    tools_absent: [log_meal]
+    db: {kcal: 405, items: 2}
+
 - id: same_as_yesterday
   note: "brief: 'same as yesterday' -- a database question, not a memory one"
   setup_meals:
@@ -138,10 +149,20 @@
     db: {items: 0}
     facts: {diet: vegetarian}
 
+- id: photo_waits_for_a_yes
+  note: "a photo hands the whole description to a model, so nothing is written until confirmed"
+  message: ""
+  image: images/plate.jpg
+  expect:
+    writes: false
+    db: {items: 0, kcal: 0}
+    asks: true
+
 - id: photo_logs_one_meal
   note: "brief: [photo of a plate]"
   message: ""
   image: images/plate.jpg
+  follow_up: yes log it
   expect:
     tools: [log_meal]
     db: {items: 3, meals: 1}
@@ -151,6 +172,7 @@
   note: "brief: [photo] 'half of this was my brother's' -- both models, ONE meal"
   message: half of this was my brother's
   image: images/plate.jpg
+  follow_up: yes log it
   expect:
     tools: [log_meal]
     db: {items: 3, meals: 1, kcal: 241}

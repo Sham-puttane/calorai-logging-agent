@@ -109,6 +109,8 @@ class AgentState(TypedDict, total=False):
     plate_analysis: dict[str, Any] | None
     memory_block: str
     alias_expansion: str | None
+    pending_expansion: str | None
+    awaiting_confirmation: bool
     spans: dict[str, float]
     short_circuit: str | None
     rounds: int
@@ -253,12 +255,33 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
         # 2. everything memory knows, rendered small
         memory_block = render.render_memory_block(conn, uid)
 
-        # 3. the narrow read-only short circuit
+        # 3. a photo waiting on a yes from the previous turn
+        pending_expansion = None
+        pending = repo.get_pending(conn, uid) if text and not state.get("image_path") else None
+        if pending:
+            # One-shot: consumed as soon as it is shown to the model. If the
+            # user confirms, it logs; if they say something unrelated, it is
+            # gone, which is the same place the TTL would have left it.
+            repo.clear_pending(conn, uid)
+            items = ", ".join(
+                f"{i.get('qty', 1):g} {i.get('unit', '')} {i['name']}".strip()
+                for i in pending["items"]
+            )
+            pending_expansion = (
+                f"(the photo they just sent showed: {items}. This is NOT logged yet. "
+                "If they are agreeing, call log_meal with exactly those items. If they "
+                "are correcting something -- a count, a food, something that was not "
+                "there -- call log_meal with the corrected list instead. If they have "
+                "moved on to something else, ignore this.)"
+            )
+
+        # 4. the narrow read-only short circuit
         short = fast_path_answer(conn, uid, text) if text and not state.get("image_path") else None
 
         return {
             "memory_block": memory_block,
             "alias_expansion": expansion,
+            "pending_expansion": pending_expansion,
             "short_circuit": short,
             "rounds": 0,
             "spans": {**state.get("spans", {}), "ingest": time.perf_counter() - started},
@@ -284,6 +307,8 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
             preamble.append(SystemMessage(content=state["memory_block"]))
         if state.get("alias_expansion"):
             preamble.append(SystemMessage(content=state["alias_expansion"]))
+        if state.get("pending_expansion"):
+            preamble.append(SystemMessage(content=state["pending_expansion"]))
 
         analysis = state.get("plate_analysis")
         if analysis:
@@ -332,6 +357,40 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
         analysis = PlateAnalysis(**state["plate_analysis"])
         return {"messages": [AIMessage(content=analysis.clarifying_question() or "what was that?")]}
 
+    def confirm_photo(state: AgentState) -> dict[str, Any]:
+        """Show what the photo produced and wait for a yes, instead of writing.
+
+        A photo is the one input where the user hands the entire description to
+        a model. Typing "2 rotis" cannot be misread; a plate can, and is --
+        against a real thali the vision model reported four naan where there
+        was one, and a glass of water that was not in the frame. The user can
+        see that instantly and the agent cannot see it at all.
+
+        So photos land in `pending_meals` and the totals do not move until the
+        person says so. This is the whole "surface uncertainty rather than
+        silently guess" requirement taken seriously: the confidence gate
+        catches what the model *knows* it is unsure about, and this catches
+        what it is confidently wrong about.
+        """
+        analysis = PlateAnalysis(**state["plate_analysis"])
+        items = [
+            {"name": i.name, "qty": i.qty, "unit": i.unit} for i in analysis.items
+        ]
+        listed = ", ".join(f"{i['qty']:g} {i['unit']} {i['name']}" for i in items)
+        repo.put_pending(conn, state["user_id"], items, listed)
+
+        hedge = ""
+        if analysis.unsized():
+            hedge = " portions are a guess from the picture"
+        note = f" (measured against {analysis.scale_reference})" if analysis.scale_reference else ""
+        return {
+            "messages": [AIMessage(
+                content=f"i can see {listed}.{note}{hedge} — want me to log that, "
+                        f"or is something off?"
+            )],
+            "awaiting_confirmation": True,
+        }
+
     # -- routing --------------------------------------------------------------
     def after_ingest(state: AgentState) -> str:
         if state.get("short_circuit"):
@@ -342,7 +401,12 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
         analysis = PlateAnalysis(**state["plate_analysis"])
         # Surface uncertainty instead of guessing: an unidentifiable food is
         # the one case where asking beats logging.
-        return "vision_question" if analysis.needs_user_input() else "agent"
+        if analysis.needs_user_input():
+            return "vision_question"
+        # Otherwise confirm before writing, unless that is turned off.
+        if os.environ.get("CALORAI_CONFIRM_PHOTOS", "1") in {"1", "true", "True"}:
+            return "confirm_photo"
+        return "agent"
 
     def after_agent(state: AgentState) -> str:
         last = state["messages"][-1]
@@ -354,6 +418,7 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
     builder.add_node("ingest", ingest)
     builder.add_node("vision", vision)
     builder.add_node("vision_question", vision_question)
+    builder.add_node("confirm_photo", confirm_photo)
     builder.add_node("agent", agent)
     builder.add_node("tools", tool_node)
     builder.add_node("short_circuit_reply", short_circuit_reply)
@@ -364,12 +429,15 @@ def build_graph(conn: sqlite3.Connection, user_id: str, streaming: bool = False)
         {"vision": "vision", "agent": "agent", "short_circuit_reply": "short_circuit_reply"},
     )
     builder.add_conditional_edges(
-        "vision", after_vision, {"agent": "agent", "vision_question": "vision_question"}
+        "vision", after_vision,
+        {"agent": "agent", "vision_question": "vision_question",
+         "confirm_photo": "confirm_photo"},
     )
     builder.add_conditional_edges("agent", after_agent, {"tools": "tools", END: END})
     builder.add_edge("tools", "agent")
     builder.add_edge("short_circuit_reply", END)
     builder.add_edge("vision_question", END)
+    builder.add_edge("confirm_photo", END)
 
     return builder.compile()
 

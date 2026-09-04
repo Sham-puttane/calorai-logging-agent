@@ -22,7 +22,7 @@ cd D:\calorai-agent
 .venv\Scripts\activate
 
 pytest tests/ -q                     # expect: 88 passed
-python evals/run_evals.py            # expect: 19/19 cases, 69/69 assertions
+python evals/run_evals.py            # expect: 21/21 cases, 77/77 assertions
 python bench\_real_e2e.py --delay 7  # expect: p50 under ~1s, throttled=0
 ```
 

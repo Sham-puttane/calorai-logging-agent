@@ -277,3 +277,60 @@ def test_a_vague_unit_falls_back_to_the_tables_own(conn):
     assert rows["paratha"] == "piece", "vague unit replaced by the canonical one"
     assert rows["rice"] == "katori", "a specific unit is respected"
     assert repo.daily_totals(conn, USER)["kcal"] == 540
+
+
+def test_correcting_the_food_itself_updates_instead_of_adding(conn):
+    """"2 parathas and chai", then "actually that was 3 rotis not 2".
+
+    There is no roti in the log -- the paratha is what was wrong. This used to
+    return ok:False, the agent fell back to log_meal, and the rotis were ADDED
+    on top of the parathas. Double counting, arriving through the one path the
+    separate-tools design exists to close.
+    """
+    repo.log_meal(conn, USER, [
+        FoodItem(name="paratha", qty=2, unit="piece"),
+        FoodItem(name="chai", qty=1, unit="cup"),
+    ])
+    assert repo.daily_totals(conn, USER)["kcal"] == 430
+
+    result = repo.correct_meal(conn, USER, target_hint="roti", new_qty=3)
+
+    assert result["ok"]
+    assert live_item_count(conn) == 2, "the paratha was rewritten, not joined by a roti"
+    assert repo.daily_totals(conn, USER)["kcal"] == 405  # 3 roti + chai
+    names = {r["name"] for r in conn.execute(
+        "SELECT name FROM meal_items WHERE user_id=? AND deleted_at IS NULL", (USER,))}
+    assert names == {"roti", "chai"}, "paratha replaced, chai untouched"
+
+
+def test_a_substitution_picks_the_plausible_row_not_the_latest(conn):
+    """The chai is the more recent row, but rotis are counted in pieces like
+    parathas are -- unit is the cheap signal that gets this right."""
+    repo.log_meal(conn, USER, [FoodItem(name="paratha", qty=2, unit="piece")])
+    repo.log_meal(conn, USER, [FoodItem(name="chai", qty=1, unit="cup")])
+
+    repo.correct_meal(conn, USER, target_hint="roti", new_qty=3)
+
+    rows = {r["name"]: r["qty"] for r in conn.execute(
+        "SELECT name, qty FROM meal_items WHERE user_id=? AND deleted_at IS NULL", (USER,))}
+    assert "chai" in rows and rows["chai"] == 1, "the drink is not the misnamed bread"
+    assert rows.get("roti") == 3
+
+
+def test_a_substitution_does_not_inherit_the_old_unit(conn):
+    repo.log_meal(conn, USER, [FoodItem(name="chai", qty=1, unit="cup")])
+    repo.correct_meal(conn, USER, target_hint="roti", new_qty=3)
+    unit = conn.execute(
+        "SELECT unit FROM meal_items WHERE user_id=? AND deleted_at IS NULL", (USER,)
+    ).fetchone()["unit"]
+    assert unit == "piece", "3 cup roti would be nonsense"
+
+
+def test_an_unrecognisable_correction_still_refuses(conn):
+    """Substitution is for foods we know. An unrecognisable hint is more likely
+    a mistake than a correction, and rewriting a row on a guess is worse than
+    refusing."""
+    repo.log_meal(conn, USER, [FoodItem(name="roti", qty=2, unit="piece")])
+    result = repo.correct_meal(conn, USER, target_hint="zorblax", new_qty=9)
+    assert not result["ok"]
+    assert repo.daily_totals(conn, USER)["kcal"] == 210

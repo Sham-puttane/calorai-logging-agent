@@ -106,6 +106,17 @@ CREATE TABLE IF NOT EXISTS aliases (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_user_phrase ON aliases(user_id, phrase);
 
+-- A photo the agent has read but NOT yet logged, waiting on the user to say
+-- yes. Photos are the one input where the user delegates the entire
+-- description to a model, and vision models get portions and counts wrong in
+-- ways the user can see instantly and the agent cannot see at all.
+CREATE TABLE IF NOT EXISTS pending_meals (
+    user_id    TEXT PRIMARY KEY,
+    items_json TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS nutrition_cache (
     key        TEXT PRIMARY KEY,
     name       TEXT NOT NULL,

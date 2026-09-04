@@ -8,8 +8,9 @@ counter -- there is no counter to desynchronise.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .db import log_edit, utcnow
@@ -140,6 +141,32 @@ def _find_recent_item(
     return None
 
 
+def _substitution_target(
+    conn: sqlite3.Connection, user_id: str, new_unit: str
+) -> sqlite3.Row | None:
+    """Which row did the user actually misname?
+
+    "2 parathas and chai" then "actually that was 3 rotis" should rewrite the
+    paratha, not the chai -- even though the chai is the more recent row. Unit
+    is the cheap signal that gets this right: roti and paratha are both
+    counted in pieces, chai is a cup. Falls back to the most recent item when
+    nothing matches, because a wrong guess is still better than adding a
+    duplicate meal.
+    """
+    cutoff = (date.today() - timedelta(days=CORRECTION_WINDOW_DAYS)).isoformat()
+    rows = conn.execute(
+        "SELECT * FROM meal_items WHERE user_id = ? AND deleted_at IS NULL"
+        " AND local_date >= ? ORDER BY id DESC",
+        (user_id, cutoff),
+    ).fetchall()
+    if not rows:
+        return None
+    for row in rows:
+        if row["unit"] == new_unit:
+            return row
+    return rows[0]
+
+
 def correct_meal(
     conn: sqlite3.Connection,
     user_id: str,
@@ -155,6 +182,26 @@ def correct_meal(
     structurally impossible rather than something the prompt has to remember.
     """
     row = _find_recent_item(conn, user_id, target_hint)
+
+    # A correction can name a food that is not in the log yet, because the food
+    # itself is what is being corrected: "2 parathas and chai", then "actually
+    # that was 3 rotis not 2". There is no roti to find -- the paratha is the
+    # thing that was wrong.
+    #
+    # Before this, that returned ok:False, the agent fell back to log_meal, and
+    # the rotis were ADDED on top of the parathas. Double counting, arriving
+    # through the one path the separate-tools design was meant to close.
+    #
+    # Substitution is only allowed when the named food is one we recognise. An
+    # unrecognisable hint is more likely a mistake than a correction, and
+    # rewriting the most recent row on a guess is worse than refusing.
+    substituting = False
+    if row is None and target_hint.strip():
+        known = resolve(conn, FoodItem(name=target_hint, qty=1), estimator=None)
+        if known.source != "unknown":
+            row = _substitution_target(conn, user_id, known.unit)
+            substituting = row is not None
+
     if row is None:
         return {
             "ok": False,
@@ -162,9 +209,12 @@ def correct_meal(
         }
 
     before = dict(row)
-    name = new_name or row["name"]
+    name = new_name or (target_hint if substituting else row["name"])
     qty = new_qty if new_qty is not None else row["qty"]
-    unit = new_unit or row["unit"]
+    # A substitution must not inherit the old food's unit -- correcting a chai
+    # into rotis should not produce "3 cup roti". Leaving it empty lets the
+    # nutrition table supply the right one.
+    unit = new_unit or ("" if substituting else row["unit"])
 
     # Re-resolve from scratch so a name change recomputes nutrition correctly
     # instead of rescaling numbers that belonged to the old food.
@@ -358,4 +408,45 @@ def transcript_append(conn: sqlite3.Connection, user_id: str, role: str, content
         "INSERT INTO transcript (user_id, role, content, created_at) VALUES (?,?,?,?)",
         (user_id, role, content, utcnow()),
     )
+    conn.commit()
+
+
+# --------------------------------------------------------------------------
+# pending photo confirmations
+# --------------------------------------------------------------------------
+# How long a photo waits for a yes before it is treated as abandoned. Long
+# enough to answer a question, short enough that "yeah" an hour later about
+# something else does not log last lunch.
+PENDING_TTL_MINUTES = 15
+
+
+def put_pending(
+    conn: sqlite3.Connection, user_id: str, items: list[dict[str, Any]], summary: str
+) -> None:
+    conn.execute(
+        "INSERT INTO pending_meals (user_id, items_json, summary, created_at)"
+        " VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET"
+        " items_json=excluded.items_json, summary=excluded.summary,"
+        " created_at=excluded.created_at",
+        (user_id, json.dumps(items), summary, utcnow()),
+    )
+    conn.commit()
+
+
+def get_pending(conn: sqlite3.Connection, user_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT items_json, summary, created_at FROM pending_meals WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(row["created_at"])
+    if age > timedelta(minutes=PENDING_TTL_MINUTES):
+        clear_pending(conn, user_id)
+        return None
+    return {"items": json.loads(row["items_json"]), "summary": row["summary"]}
+
+
+def clear_pending(conn: sqlite3.Connection, user_id: str) -> None:
+    conn.execute("DELETE FROM pending_meals WHERE user_id = ?", (user_id,))
     conn.commit()

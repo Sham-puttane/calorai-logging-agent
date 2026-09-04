@@ -27,7 +27,8 @@ from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
 from calorai.graph import build_graph, stream_turn  # noqa: E402
 from calorai.llm import active_backends  # noqa: E402
-from calorai.memory import extractor, render  # noqa: E402
+from calorai.memory import extractor, render, store  # noqa: E402
+from calorai.schemas import FoodItem  # noqa: E402
 
 st.set_page_config(page_title="CalorAI", page_icon="🍛", layout="wide")
 
@@ -88,13 +89,39 @@ def main() -> None:
 
         st.subheader("what it remembers")
         block = render.render_memory_block(conn, user)
-        st.code(block or "nothing yet", language=None)
+        if block:
+            st.code(block, language=None)
+        else:
+            # Empty here is correct, not broken: meals are events, not facts
+            # about a person, so logging food deliberately writes nothing.
+            st.caption(
+                "nothing yet — this only fills up from durable facts like "
+                "*i'm vegetarian* or *aiming for 140g protein*. Logging meals "
+                "writes nothing here on purpose."
+            )
 
         backends = active_backends()
         st.caption(f"text: {backends['text']}")
         st.caption(f"vision: {backends['vision']}")
         if backends["text"].startswith("mock"):
             st.warning("offline mock backend — set CALORAI_TEXT_BACKEND=groq in .env")
+
+        # "same as yesterday" and "my usual" need a past to refer to. A brand new
+        # user has neither, so the agent correctly answers "nothing logged
+        # yesterday" -- which looks like a bug in a demo. This gives them one.
+        if st.button("seed a returning user", use_container_width=True):
+            repo.log_meal(
+                conn, user,
+                [FoodItem(name="idli", qty=3, unit="piece"),
+                 FoodItem(name="sambar", qty=1, unit="katori")],
+                slot="breakfast", day="yesterday",
+            )
+            store.put_alias(
+                conn, user, "my usual",
+                [{"name": "oats", "qty": 1, "unit": "katori"},
+                 {"name": "banana", "qty": 1, "unit": "piece"}],
+            )
+            st.rerun()
 
         if st.button("clear this user's day", use_container_width=True):
             conn.execute(

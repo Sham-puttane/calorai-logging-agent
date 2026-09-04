@@ -46,6 +46,10 @@ class Case:
         self.setup_meals = raw.get("setup_meals", [])
         self.setup_messages = raw.get("setup_messages", [])
         self.setup_alias = raw.get("setup_alias")
+        # A second message sent after the first, used for the photo flow: the
+        # image turn asks for confirmation, and assertions run on what the
+        # follow-up produced.
+        self.follow_up = raw.get("follow_up")
         self.expect = raw.get("expect", {})
 
 
@@ -148,6 +152,8 @@ def run(cases: list[Case], verbose: bool = False) -> int:
 
         image = str(ROOT / case.image) if case.image else None
         result = run_turn(conn, USER, case.message, image_path=image, graph=graph)
+        if case.follow_up:
+            result = run_turn(conn, USER, case.follow_up, graph=graph)
         # memory writes happen after the reply in production too
         extractor.extract_and_store(conn, USER, case.message, use_model=False)
         extractor.maybe_learn_alias(conn, USER, case.message)
