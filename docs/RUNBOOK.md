@@ -125,16 +125,20 @@ is worse than dropping a point.
 ## 0:00 — What it is · *Streamlit, sidebar visible*
 
 **Say:**
-> "CalorAI logs meals from plain text messages. The bet is that it should feel like texting a friend
-> rather than filling in a form. I'll show it working, then prove the state is real in a second
-> process, then walk the decisions that actually carry it — including the bug I found last, which is
-> the most interesting thing here."
+> "This is CalorAI. You text it what you ate, the way you'd text a friend, and it logs it. No forms,
+> no dropdowns."
+
+> "I'll show it working first. Then I'll prove the state is real by killing the process and opening
+> it somewhere else. Then the decisions that actually carry it — including a bug I found in the last
+> hour, which is honestly the most interesting thing in here."
 
 ---
 
 ## 0:35 — SURFACE 1: the UI · *the eleven steps*
 
-**Test:** paste these in order. **Watch the sidebar, not the chat** — say that out loud once.
+**Test:** paste these in order. Say this once, up front:
+
+> "Watch the sidebar, not the chat. The chat is easy to fake. The sidebar is the database."
 
 | # | Type | Watch for |
 |---|---|---|
@@ -153,39 +157,43 @@ is worse than dropping a point.
 Let 1, 2 and 4 run fast and quiet. **Five moments to slow down on:**
 
 **Step 3 — say something here. The job description names this exact skill:**
-> "Watch what it does with that. It logs an estimate and asks me nothing. Knowing when to ask and
-> when to just log it is the thing I spent longest on — logging something imprecise beats
-> interrogating someone about a snack they can't remember."
+> "Now watch what it does with that one. It logs an estimate, and it asks me nothing."
+
+> "Knowing when to ask and when to just log it is the thing I spent longest on. Logging something
+> imprecise beats interrogating someone about a snack they can't remember."
 
 **Step 5 — the most important ten seconds in the video:**
-> "Watch the sidebar. 790 to 895 — 105 calories, exactly one roti. The roti row goes two to three,
-> and no second row appears. That is not the prompt getting lucky, and I'll show you why in a
-> minute."
+> "Watch the sidebar. Seven ninety, to eight ninety-five. That's 105 calories. Exactly one roti."
+
+> "The roti row goes from two to three. No second row appears. That's not the prompt getting lucky,
+> and in a minute I'll show you why it can't be."
 
 **Step 6:**
-> "That's a fact about me, not a meal. The total didn't move — but it's now under what it
-> remembers."
+> "That one's a fact about me, not a meal. So the total doesn't move. But look — it's now under what
+> it remembers."
 
 **Step 7:**
-> "Thirty milliseconds, and no model call at all. And it knows my target because I mentioned it one
+> "Thirty milliseconds. No model call at all. And it knows my target, because I mentioned it one
 > message ago."
 
 **Step 8 — the photo:**
-> "It hasn't logged anything yet. A photo is the one input where you hand the whole description to a
-> model, and models get plates wrong in ways you see instantly and the agent can't see at all. So it
-> shows you what it found, and waits."
+> "Notice it hasn't logged anything yet."
 
-Then step 9, without pausing:
-> "And I correct it before it ever writes. What gets logged is one naan, not the four it guessed."
+> "A photo is the one input where you hand the entire description over to a model. And models get
+> plates wrong in ways you can see instantly and the agent can't see at all. So it shows me what it
+> found, and it waits."
 
-**Cut first:** steps 10 and 11 — the alias gets proved again in the CLI segment, better.
+Then step 9, straight away, no pause:
+> "And I correct it before it ever writes. What gets logged is one naan. Not the four it guessed."
+
+**Cut first:** steps 10 and 11. The alias gets proved again in the CLI segment, and better.
 
 ---
 
 ## 3:45 — SURFACE 2: the CLI · *Terminal B*
 
 This is the segment that proves the memory claim, and it takes about 75 seconds. **Use the same user
-as the UI** — that is the whole trick.
+as the UI** — that's the whole trick.
 
 **Test:**
 
@@ -200,23 +208,29 @@ python -m calorai.cli --user take1
 steady-state numbers rather than a cold first turn — which reads ~160 ms and undersells the point.)*
 
 **Say — while the memory block is on screen:**
-> "Different process. Different interface. Same user. Everything I taught the web app is here — the
-> diet, the protein target, the learned shorthand — because memory lives in SQLite, not in a session
-> variable. And none of this is conversation history. These are three purpose-built stores."
+> "So. Different process. Different interface. Same user."
+
+> "Everything I taught the web app is here. The diet, the protein target, the shorthand it learned.
+> Because memory lives in SQLite, not in a session variable."
+
+> "And none of this is conversation history. That's the part I'd want to be judged on. These are
+> three purpose-built stores."
 
 ```
 my usual
 ```
-> "And the shorthand it learned two minutes ago in the browser resolves here."
+> "And the shorthand it learned two minutes ago in the browser resolves in here."
 
 ```
 /debug
 ```
 
 **Say — this is why the CLI is in the video at all:**
-> "This is the part the UI hides: per-turn stage timings, and the actual tool calls. Read the ratio
-> — ingest is a few milliseconds, and that's alias resolution, memory load and routing all together.
-> Essentially the entire turn is the model round trip, which is where it should be."
+> "This is the part the UI hides. Per-turn stage timings, and the actual tool calls."
+
+> "Read the ratio. Ingest is a few milliseconds, and that's alias resolution, memory loading and
+> routing, all together. Basically the whole turn is the model round trip. Which is where it should
+> be."
 
 *(Say the numbers you can see, not memorised ones. On the real backend `ingest` reads well under a
 millisecond against an `agent` of several hundred; on the mock it's a few ms against a few ms.)*
@@ -225,8 +239,8 @@ millisecond against an `agent` of several hundred; on the mock it's a few ms aga
 how much protein have I had today?
 /debug
 ```
-> "And that one: `tools` empty, `fastpath True`, about ten milliseconds. A totals question is a SQL
-> query — there's no reason to pay a model for it."
+> "And that one — tools empty, fast path true, about ten milliseconds. A totals question is a SQL
+> query. There's no reason to pay a model for it."
 
 Then isolation, in two commands:
 
@@ -237,10 +251,10 @@ python -m calorai.cli --user someone_else
 ```
 /memory
 ```
-> "New user, empty. `user_id` is on every table and every query, and tools are constructed per
-> session, so a tool physically cannot address another user's rows."
+> "New user. Empty. The user id is on every table and every query, and the tools are built per
+> session — so a tool physically cannot reach another user's rows."
 
-**Cut first:** the `someone_else` isolation check — it's a bonus, not a core requirement.
+**Cut first:** the `someone_else` isolation check. It's a bonus, not a core requirement.
 
 ---
 
