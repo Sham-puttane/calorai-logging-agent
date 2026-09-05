@@ -1,10 +1,16 @@
 # Recording runbook
 
-Do **Part 1** with nothing recording. Then **Part 2** is the take.
+**Part 1** is the dry run — nothing recording. **Part 2** is the take, on a 10-minute clock.
+
+Three surfaces, and each is in the video for a reason. Don't demo the same thing twice:
+
+| Surface | What only it can prove |
+|---|---|
+| **Streamlit UI** | The product. Totals moving in the sidebar as you type, photo confirmation, the memory panel filling. |
+| **CLI** | That the state is *real* — a different process, a different interface, same user, everything still there. Plus `/debug`, which shows the tool calls and per-stage timings the UI hides. |
+| **Anatomy board** | The reasoning. The graph, the measured model choices, the latency work, the bugs — so you are not reading code aloud. |
 
 **Board:** https://claude.ai/code/artifact/3be0699f-b1bf-4ea4-9ef4-a67624675aea
-One page carrying the graph, the decisions, the measured model choices and the bugs. Keep it in a
-second tab — it covers the architecture and latency sections so you are not reading code aloud.
 
 ---
 
@@ -15,88 +21,36 @@ second tab — it covers the architecture and latency sections so you are not re
 | | |
 |---|---|
 | Terminal A | `cd D:\calorai-agent` → `.venv\Scripts\activate` → `streamlit run app.py` |
-| Terminal B | same folder, activated, for `pytest` and evals |
+| Terminal B | same folder, activated — for the CLI, then tests |
 | Browser tab 1 | http://localhost:8501 |
 | Browser tab 2 | the board |
+| Browser tab 3 | the [LangSmith trace](https://smith.langchain.com/public/de49189b-4278-407d-a884-6d296f55a787/r) |
 | Editor | `code D:\calorai-agent` |
 
-**Bump the terminal font** (`Ctrl+Shift+plus`). Unreadable text is the commonest reason these
-videos fail.
+**Bump the terminal font** (`Ctrl+Shift+plus`). Unreadable text is the commonest reason these videos
+fail. Put the eleven demo lines in a scratch file to paste — typing them live costs you 90 seconds
+you do not have.
 
-## Pre-flight — all four
+## Pre-flight — all four, in order
 
 ```bash
 pytest tests/ -q                  # 178 passed
 python evals/run_evals.py         # 21/21 cases, 77/77 assertions
-python bench\_real_e2e.py --delay 3
+python bench/_real_e2e.py --delay 5
 del calorai.db                    # start from zero
 ```
 
-If `_real_e2e.py` prints `rate limited`, **fix that before recording** — see *Providers* below.
+The third one is the one that matters. **Read the `db:` line under every turn, not the replies.** A
+reply that sounds right above an unchanged `db:` line is the failure worth catching now rather than
+on camera — it is exactly how the lying failover model was found.
 
-Start Streamlit, set the user field to something fresh like `take1`, and press **Enter** to apply.
-Streamlit loads code once at boot, so **restart it after any change**.
+Then start Streamlit, set the user field to `take1`, press **Enter** to apply. Streamlit loads code
+once at boot, so **restart it after any change**.
 
-## The exact sequence
+## Rehearse the whole thing once, timed
 
-Type these in order. Watch the **sidebar**, not the chat.
-
-| # | Type | Watch for |
-|---|---|---|
-| 1 | `had 2 parathas and chai for breakfast` | 430 cal · rows read `2 piece paratha`, `1 cup chai` |
-| 2 | `leftover biryani, maybe two thirds of the box` | **0.67**, not 2 servings · ~161 cal |
-| 3 | `skipped lunch but grazed all afternoon` | logs an estimate, **asks nothing** |
-| 4 | `2 rotis with dal` | 4 rows |
-| 5 | `actually that was 3 rotis not 2` | **+105 cal, still 4 rows**, roti goes 2 → 3 |
-| 6 | `i'm vegetarian and aiming for 140g of protein` | totals **do not move** · memory panel fills |
-| 7 | `how much protein have I had today?` | ~30 ms · "fast path, no model call" · knows the 140 g target |
-| 8 | upload `images/plate.jpg`, click **send photo** | preview first · **nothing logged** · it asks |
-| 9 | `yes but it was 1 naan not 4` | logs the corrected list, not what it guessed |
-| 10 | `remember this as my usual dinner` | no tool call · alias appears in the sidebar |
-| 11 | `my usual` | logs that dinner back |
-
-Then click **seed yesterday's meals** and send `same as yesterday` — it should find and log the
-idli and sambar.
-
-## Persistent memory — in the CLI, not the UI
-
-Killing the process is the only proof that cannot be faked by history sitting in a variable.
-
-```bash
-python -m calorai.cli --user memtest
-```
-```
-i'm vegetarian and aiming for 140g of protein
-1 naan, 1 katori paneer and 1 cup daal for dinner
-remember this dinner as my usual
-/memory          → diet, target, and the whole dinner
-/quit            ← actually exit the process
-```
-```bash
-python -m calorai.cli --user memtest
-```
-```
-/memory          → still there, from SQLite
-my usual         → logs the dinner learned last session
-/history         → meals live here; /memory holds only facts and the alias
-```
-
-## Tracing — worth 20 seconds on camera
-
-The CLI banner and the sidebar both say whether tracing is really on:
-`tracing on -> project 'calorai-agent'`. Open the public trace after the correction turn:
-
-https://smith.langchain.com/public/de49189b-4278-407d-a884-6d296f55a787/r
-
-> "That's the correction turn. You can see the agent node decide, then `correct_meal` fire — and
-> `log_meal` not fire. The tool boundary that makes double counting impossible is a tree you can
-> look at, not a claim I'm making."
-
-## Multi-user, in two clicks
-
-Change the sidebar user to any new name: zero calories, empty memory. Change it back: everything
-returns. `user_id` is on every table and every query, and tools are built per session, so a tool
-physically cannot address another user's rows.
+Run Part 2 end to end with a stopwatch and nothing recording. You are looking for two numbers: total
+length, and how long the photo turn takes — it is ~6 s and it will feel like thirty.
 
 ## Providers — if you hit rate limits
 
@@ -118,36 +72,63 @@ check the sidebar.
 | `rate limited on photos` | wait ~30 s — Pixtral limits per second, not per day |
 | Everything throttled | all three text providers are at their daily caps. `CALORAI_TEXT_BACKEND=mock` still demonstrates the graph, tools, memory and totals end to end with no network — say so on camera rather than fighting it |
 
-Confirm the whole conversation actually works on whatever you switched to, rather than trusting one
-reply — this is exactly the check that caught the lying model:
-
-```bash
-python bench/_real_e2e.py --delay 5
-```
-
-Read the `db:` line under every turn. A reply that sounds right above an unchanged `db:` line is the
-failure worth catching before you record.
+After any switch, re-run `python bench/_real_e2e.py --delay 5` and read the `db:` lines. Do not
+trust one good-looking reply.
 
 ---
 
-# Part 2 — The take (aim 7–9 min)
+# Part 2 — The take
 
-Record with **Snipping Tool** → video icon → drag a box round the window. Silent, so you add voice
-afterwards.
+**Hard cap 10:00. Target 9:45.** Record with **Snipping Tool** → video icon → drag a box round the
+window. Silent, so you add voice afterwards.
 
-## 0:00 — What it is · *the UI*
+| Clock | Surface | Segment |
+|---|---|---|
+| 0:00 | UI | What it is |
+| 0:35 | UI | **Demo — the eleven steps** |
+| 3:45 | CLI | **Persistence, tool calls, isolation** |
+| 5:00 | Board + editor | Architecture, memory, multimodal |
+| 7:45 | Terminal + board | Tests, evals, latency |
+| 8:45 | Board | The bug, and close |
 
-> "CalorAI logs meals from plain text messages. The bet is that it should feel like texting a
-> friend rather than filling in a form. I'll show it working, then the decisions that actually
-> carry it, then the latency work — including what I couldn't fix."
+If you run behind, each segment names **what to cut first**. Cut it without hesitating — going long
+is worse than dropping a point.
 
-## 0:30 — Demo · *steps 1–11*
+---
 
-Let the speed talk. Four moments to slow down on.
+## 0:00 — What it is · *Streamlit, sidebar visible*
 
-**Step 5, the correction — the most important thing in the video:**
-> "Watch the sidebar. 790 to 895 — that's 105 calories, exactly one roti. The roti row goes two to
-> three, and no second row appears. That isn't the prompt getting lucky, and I'll show you why in a
+**Say:**
+> "CalorAI logs meals from plain text messages. The bet is that it should feel like texting a friend
+> rather than filling in a form. I'll show it working, then prove the state is real in a second
+> process, then walk the decisions that actually carry it — including the bug I found last, which is
+> the most interesting thing here."
+
+---
+
+## 0:35 — SURFACE 1: the UI · *the eleven steps*
+
+**Test:** paste these in order. **Watch the sidebar, not the chat** — say that out loud once.
+
+| # | Type | Watch for |
+|---|---|---|
+| 1 | `had 2 parathas and chai for breakfast` | 430 cal · rows read `2 piece paratha`, `1 cup chai` |
+| 2 | `leftover biryani, maybe two thirds of the box` | **0.67**, not 2 servings · ~161 cal |
+| 3 | `skipped lunch but grazed all afternoon` | logs an estimate, **asks nothing** |
+| 4 | `2 rotis with dal` | 4 rows |
+| 5 | `actually that was 3 rotis not 2` | **+105 cal, still 4 rows**, roti goes 2 → 3 |
+| 6 | `i'm vegetarian and aiming for 140g of protein` | totals **do not move** · memory panel fills |
+| 7 | `how much protein have I had today?` | ~30 ms · knows the 140 g target |
+| 8 | upload `images/plate.jpg` → **send photo** | preview first · **nothing logged** · it asks |
+| 9 | `yes but it was 1 naan not 4` | logs the corrected list, not what it guessed |
+| 10 | `remember this as my usual dinner` | no tool call · alias appears in the sidebar **on the next interaction** — the write lands on a background thread, so don't stare at it waiting |
+| 11 | `my usual` | logs that dinner back |
+
+Let 1–4 run fast and quiet. **Four moments to slow down on:**
+
+**Step 5 — the most important ten seconds in the video:**
+> "Watch the sidebar. 790 to 895 — 105 calories, exactly one roti. The roti row goes two to three,
+> and no second row appears. That is not the prompt getting lucky, and I'll show you why in a
 > minute."
 
 **Step 6:**
@@ -155,76 +136,140 @@ Let the speed talk. Four moments to slow down on.
 > remembers."
 
 **Step 7:**
-> "Thirty milliseconds, no model call at all. And it knows my target because I mentioned it one
+> "Thirty milliseconds, and no model call at all. And it knows my target because I mentioned it one
 > message ago."
 
-**Step 8:**
-> "It hasn't logged anything yet. A photo is the one input where you hand the whole description to
-> a model, and models get plates wrong in ways you see instantly and the agent can't see at all. So
-> it shows you what it found and waits."
+**Step 8 — the photo:**
+> "It hasn't logged anything yet. A photo is the one input where you hand the whole description to a
+> model, and models get plates wrong in ways you see instantly and the agent can't see at all. So it
+> shows you what it found, and waits."
 
-## 3:30 — Architecture · *the board, then the editor*
+Then step 9, without pausing:
+> "And I correct it before it ever writes. What gets logged is one naan, not the four it guessed."
 
-Pan the **graph**.
+**Cut first:** steps 10 and 11 — the alias gets proved again in the CLI segment, better.
 
-> "It's a LangGraph tool-calling loop. The model sees all six tool schemas and decides — it's
-> genuinely an agent, not a classifier dispatching to handlers. A router would be faster but would
-> only handle the phrasings I thought to write rules for."
+---
+
+## 3:45 — SURFACE 2: the CLI · *Terminal B*
+
+This is the segment that proves the memory claim, and it takes about 75 seconds. **Use the same user
+as the UI** — that is the whole trick.
+
+**Test:**
+
+```bash
+python -m calorai.cli --user take1
+```
+```
+/memory
+```
+
+*(Run `/memory` first, as written. It warms the process, so the timings you point at later are real
+steady-state numbers rather than a cold first turn — which reads ~160 ms and undersells the point.)*
+
+**Say — while the memory block is on screen:**
+> "Different process. Different interface. Same user. Everything I taught the web app is here — the
+> diet, the protein target, the learned shorthand — because memory lives in SQLite, not in a session
+> variable. And none of this is conversation history. These are three purpose-built stores."
+
+```
+my usual
+```
+> "And the shorthand it learned two minutes ago in the browser resolves here."
+
+```
+/debug
+```
+
+**Say — this is why the CLI is in the video at all:**
+> "This is the part the UI hides: per-turn stage timings, and the actual tool calls. Read the ratio
+> — ingest is a few milliseconds, and that's alias resolution, memory load and routing all together.
+> Essentially the entire turn is the model round trip, which is where it should be."
+
+*(Say the numbers you can see, not memorised ones. On the real backend `ingest` reads well under a
+millisecond against an `agent` of several hundred; on the mock it's a few ms against a few ms.)*
+
+```
+how much protein have I had today?
+/debug
+```
+> "And that one: `tools` empty, `fastpath True`, about ten milliseconds. A totals question is a SQL
+> query — there's no reason to pay a model for it."
+
+Then isolation, in two commands:
+
+```
+/quit
+python -m calorai.cli --user someone_else
+```
+```
+/memory
+```
+> "New user, empty. `user_id` is on every table and every query, and tools are constructed per
+> session, so a tool physically cannot address another user's rows."
+
+**Cut first:** the `someone_else` isolation check — it's a bonus, not a core requirement.
+
+---
+
+## 5:00 — SURFACE 3: the board · *architecture, memory, multimodal*
+
+Switch to the board tab. Pan the **graph**. You are talking over a diagram now, not reading code —
+drop into the editor only for the two files named below.
+
+> "It's a LangGraph tool-calling loop. The model sees all six tool schemas and decides — genuinely
+> an agent, not a classifier dispatching to handlers. A router would be faster, but would only
+> handle the phrasings I thought to write rules for."
 
 > "Ingest does the cheap deterministic work first. The two places the model is deliberately absent
 > are the fast path and the memory write — and the memory write happens after you already have your
 > reply, which is why memory costs nothing in p50."
 
-**`src/calorai/tools.py`** — the one to dwell on:
-> "`correct_meal` is a *separate tool* from `log_meal`. One 'record what they said' tool lets the
-> model answer 'actually that was 3 rotis' by logging three more, and no prompt wording reliably
+**Editor · `src/calorai/tools.py`** — the one file to dwell on:
+> "`correct_meal` is a *separate tool* from `log_meal`. A single 'record what they said' tool lets
+> the model answer 'actually that was 3 rotis' by logging three more, and no prompt wording reliably
 > stops that. Split, `correct_meal` has no INSERT path and `log_meal` has no UPDATE path — double
-> counting becomes structurally impossible."
+> counting becomes structurally impossible. That's what you were watching in the sidebar earlier."
 
-**`src/calorai/db.py`**:
+**Editor · `src/calorai/db.py`:**
 > "And there's no stored total anywhere. Totals are a SUM at query time. There's no counter to
 > drift."
 
-## 5:30 — Memory · *`src/calorai/memory/`*
+**Back to the board — memory:**
+> "Three stores, and none of them is conversation history. Writes happen on a background thread
+> after the reply goes out, and extraction is three tiers — a regex gate most messages exit having
+> cost nothing, then rules, then the model. 'Had 2 rotis' is an event, not a fact about me, and it
+> never reaches the model."
 
-> "Three stores, and none of them is conversation history."
+> "Retrieval is: all the facts, every turn. That sounds naive until you notice facts are *keyed*, so
+> a contradiction supersedes rather than appends, and the store stays at a couple of dozen
+> one-liners forever. The honest answer to 'how do you retrieve without bloating the prompt' is to
+> make retrieval unnecessary. That's also why there's no RAG — it solves corpus-bigger-than-context,
+> and this can't have that problem. I measured it: memory is about 6% of tokens; tool schemas were
+> 71%."
 
-`extractor.py`:
-> "Writes happen on a background thread after the reply goes out. Extraction is three tiers — a
-> regex gate most messages exit having cost nothing, then rules, then the model. 'Had 2 rotis' is an
-> event, not a fact about me, and it never reaches the model. There's a test asserting exactly
-> that."
-
-`render.py`:
-> "All the facts, every turn. That sounds naive until you notice facts are *keyed* and a
-> contradiction supersedes rather than appends — so the store stays at a couple of dozen one-liners
-> forever. The honest answer to 'how do you retrieve without bloating the prompt' is to make
-> retrieval unnecessary."
-
-> "That's also why there's no RAG. It solves corpus-bigger-than-context, and this can't have that
-> problem. When I measured where the tokens go, memory was about 6% and tool schemas were 71%."
-
-**Say this — a deliberate disagreement:**
+**Say this — a deliberate disagreement, and they asked for opinions:**
 > "The brief groups 'same as yesterday' with 'my usual' as memory problems. I don't think they're
 > the same thing. One's a date predicate with an exact answer; the other is learned shorthand. I
 > built them differently."
 
-`render_vision_priors`:
-> "Diet facts go into the *vision* prompt too. If it knows I'm vegetarian, white cubes come back as
-> paneer rather than chicken. Memory improving multimodal accuracy, not just conversation."
+**Multimodal:**
+> "I read the food-image estimation literature before writing the vision prompt. The finding that
+> mattered: portion is the error, not identification. Models name biryani fine — they can't tell 200
+> grams from 500, because a photo carries no absolute scale."
 
-## 7:00 — Multimodal · *`src/calorai/vision.py`*
+> "So confidence is two fields, not one, and the thresholds are deliberately asymmetric: low
+> identification asks, low portion logs anyway and says what it assumed. Gating both the same way
+> would make it ask about portions on nearly every photo. And diet facts go into the *vision* prompt
+> too — if it knows I'm vegetarian, white cubes come back as paneer rather than chicken."
 
-> "I read the food-image estimation literature before writing this prompt. The finding that
-> mattered: portion is the error, not identification. Models name biryani fine — they can't tell
-> 200 grams from 500, because a photo carries no absolute scale."
+**Cut first:** the token percentages, and the vision-priors point. Keep the disagreement — it is
+worth more than either.
 
-> "So confidence is two fields, not one. They fail independently and deserve different questions —
-> 'is that paneer or tofu' versus 'small katori or big bowl'. And the thresholds are deliberately
-> asymmetric: low identification asks, low portion logs anyway and says what it assumed. Gating both
-> the same way would make it ask about portions on nearly every photo."
+---
 
-## 8:00 — Testing and latency · *Terminal B, then the board*
+## 7:45 — Tests, evals, latency · *Terminal B, then the board*
 
 ```bash
 pytest tests/ -q
@@ -232,71 +277,85 @@ python evals/run_evals.py
 ```
 
 > "178 tests and 21 eval cases, and both run on a clean clone with no API keys, because there's a
-> deterministic offline backend. Eleven of those come straight from your test set — you can see
-> them named as they pass."
+> deterministic offline backend. Eleven of those come straight from your test set — you can see them
+> named as they pass."
 
 > "Each case scores four axes, and the load-bearing one is the live row count. A correction done
 > with the wrong tool still produces plausible-looking calories. Only the row count catches it."
 
-Switch to the board's **latency** and **bugs** sections:
+**Board → latency:**
+> "Text p50 766 milliseconds, p95 1257 — and you saw in `/debug` that the agent's own overhead is
+> sub-millisecond, so that is all model round trip. The image path is 5.9 seconds. The biggest
+> single win was `reasoning_effort=low`: gpt-oss is a reasoning model, and two-tool turns were
+> taking twelve to twenty seconds."
 
-> "Text p50 766 milliseconds, p95 1257. The agent's own overhead is sub-millisecond — basically all
-> of it is the model round trip. The image path is 5.9 seconds, and I'll come back to that."
-
-**Then the one worth telling as a story:**
+**The one worth telling as a story:**
 > "The image p95 was 13.7 seconds and I assumed that was inference. It wasn't. I had a second vision
-> provider configured as failover, and its daily quota was gone — so every photo was paying for a
-> dead provider's timeout before the working one ever got called. Deleting the fallback took p95 to
+> provider configured as failover and its daily quota was gone — so every photo was paying for a
+> dead provider's timeout before the working one was ever called. Deleting the fallback took p95 to
 > 6.8. A fallback to something that's out of quota is worse than no fallback, and you can't reason
 > your way to that. You have to look."
 
-> "Biggest win was `reasoning_effort=low`: gpt-oss is a reasoning model and two-tool turns were
-> taking twelve to twenty seconds."
-
-> "I also picked the newest Gemini from the docs, then measured it — eight seconds, because it's a
-> thinking model. The older one does the same job in 429 milliseconds. The newest model was the
-> wrong model."
-
 > "And the honest part: the binding constraint isn't latency, it's tokens per day. That's why the
-> benchmark paces requests and reports a throttled count — firing thirty turns back to back
-> measures the rate limiter, not the agent."
+> benchmark paces requests and reports a throttled count — firing thirty turns back to back measures
+> the rate limiter, not the agent."
 
-## 9:00 — Close · *the board's bugs section*
+**Cut first:** the Gemini thinking-model story (429 ms vs 8.1 s) — it's on the board if they read it.
 
-> "The mock proves plumbing, not model behaviour. Running the real models found things it
-> structurally couldn't — including the model parroting an example from my own system prompt back
-> at me, and a portion getting halved twice because I had belt-and-braces logic that wasn't."
+---
 
-**The last bug, and the best one — worth a full minute:**
-> "The one I found last is the one I'd lead with. My failover provider was pointed at a model I'd
-> verified with a single call. When I finally ran the whole conversation through it, it told me
-> 'roughly 170 for assorted snacks' — and it had made no tool call at all. It was confirming meals
-> it never wrote."
+## 8:45 — The bug, and close · *the board's bugs section*
 
-> "That's the worst failure this product can have, because the user has no reason to check. And
-> notice what couldn't catch it: the mock can't, because the mock always calls the tool. A unit test
-> can't, because the tool is correct. The latency benchmark can't — it passed, and it was actually
-> *faster* than the model I replaced it with, which is exactly how it became the default."
+Do not rush this. It is the strongest minute in the video.
+
+> "The mock proves plumbing, not model behaviour. Running real models found things it structurally
+> couldn't — the model parroting an example out of my own system prompt, a portion getting halved
+> twice because prompt and code were both being safe. But the one I found last is the one I'd lead
+> with."
+
+> "My failover provider was pointed at a model I'd verified with a single call. When I finally ran
+> the whole conversation through it, it told me 'roughly 170 for assorted snacks' — and it had made
+> no tool call at all. It was confirming meals it never wrote. That's the worst failure this product
+> can have, because the user has no reason to check."
+
+> "Notice what couldn't catch it. The mock can't, because the mock always calls the tool. A unit
+> test can't, because the tool is correct. The latency benchmark can't — it passed, and that model
+> was actually *faster* than the one I replaced it with, which is exactly how it became the default."
 
 > "What caught it is a script that walks the whole conversation and prints the database after every
 > turn, so a reply that sounds right sits directly above a row count that didn't move. The
-> generalisation I'd defend is: a health check has to spend what a real request spends. I got that
-> same lesson twice from opposite directions — a five-token 'say OK' probe returning 200 while every
-> real turn was failing on the daily token cap, and a single-call probe passing on a model that
-> couldn't hold a conversation."
+> generalisation I'd defend: a health check has to spend what a real request spends. I got that
+> lesson twice from opposite directions — a five-token 'say OK' probe returning 200 while every real
+> turn was failing on the daily token cap, and a single-call probe passing on a model that couldn't
+> hold a conversation."
 
-> "With more time: get the image path under three seconds, and prompt caching, which on a
-> token-limited tier converts directly into more usable turns."
+**Close:**
+> "With more time: the image path under three seconds, and prompt caching — which on a
+> token-limited tier converts directly into more usable turns. Everything I've claimed is in the
+> README, and the benchmark runs are committed, including the one I can't retake, and why."
 
 ---
 
 ## Checklist
 
-- [ ] Correction shown — total moving by exactly one roti, row count unchanged
+Tick these watching it back, not while recording.
+
+**Required by the brief**
+- [ ] Correction shown — total moving by exactly one roti, **row count unchanged**
 - [ ] Photo shown, **including** the confirmation step and correcting it before it writes
-- [ ] Memory written *and* retrieved
-- [ ] `correct_meal` vs `log_meal` explained as **structural**
-- [ ] "no RAG, and here's why" said out loud
+- [ ] Memory written *and* retrieved — and retrieved **in a second process**
+- [ ] `correct_meal` vs `log_meal` explained as **structural**, not prompted
 - [ ] Latency stated, **with one thing you couldn't fix**
 - [ ] Tests and evals run on camera
+
+**Worth the time**
+- [ ] All three surfaces used, each for something only it proves
+- [ ] "No RAG, and here's why" said out loud
+- [ ] The disagreement with the brief stated
+- [ ] The failover bug told as a story, with what couldn't have caught it
 - [ ] Bonuses named: evals, streaming, multi-user isolation, offline mode, Streamlit UI
+
+**Kill criteria — re-record if any of these**
+- [ ] Over 10:00
+- [ ] Terminal text unreadable at 1080p
+- [ ] A `rate limited` reply appears without you naming it as the free-tier cap

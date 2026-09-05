@@ -50,7 +50,11 @@ def get_session(user_id: str):
     Streamlit re-executes this file on every interaction, so without the cache
     each keystroke would rebuild the graph and reconnect to SQLite.
     """
-    conn = connect("calorai.db")
+    # None -> db.DEFAULT_DB, which reads CALORAI_DB_PATH. Hardcoding the name
+    # here made the UI and the CLI disagree the moment that variable was set,
+    # and the symptom is the worst kind: both surfaces work perfectly, against
+    # different databases, so memory looks like it silently failed to persist.
+    conn = connect()
     return conn, build_graph(conn, user_id, streaming=True)
 
 
