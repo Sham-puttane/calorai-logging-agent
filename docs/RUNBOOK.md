@@ -34,7 +34,7 @@ you do not have.
 ## Pre-flight — all four, in order
 
 ```bash
-pytest tests/ -q                  # 178 passed
+pytest tests/ -q                  # 182 passed
 python evals/run_evals.py         # 21/21 cases, 77/77 assertions
 python bench/_real_e2e.py --delay 5
 del calorai.db                    # start from zero
@@ -113,9 +113,9 @@ window. Silent, so you add voice afterwards.
 | 0:00 | UI | What it is |
 | 0:35 | UI | **Demo — the eleven steps** |
 | 3:45 | CLI | **Persistence, tool calls, isolation** |
-| 5:00 | Board + editor | Architecture, memory, multimodal |
-| 7:45 | Terminal + board | Tests, evals, latency |
-| 8:45 | Board | The bug, and close |
+| 5:00 | Board + editor | Architecture, memory, ask-vs-log, multimodal, Supabase |
+| 7:30 | Terminal + board | Tests, evals, **drift**, latency |
+| 8:40 | Board | The bug, and close |
 
 If you run behind, each segment names **what to cut first**. Cut it without hesitating — going long
 is worse than dropping a point.
@@ -150,7 +150,12 @@ is worse than dropping a point.
 | 10 | `remember this as my usual dinner` | no tool call · alias appears in the sidebar **on the next interaction** — the write lands on a background thread, so don't stare at it waiting |
 | 11 | `my usual` | logs that dinner back |
 
-Let 1–4 run fast and quiet. **Four moments to slow down on:**
+Let 1, 2 and 4 run fast and quiet. **Five moments to slow down on:**
+
+**Step 3 — say something here. The job description names this exact skill:**
+> "Watch what it does with that. It logs an estimate and asks me nothing. Knowing when to ask and
+> when to just log it is the thing I spent longest on — logging something imprecise beats
+> interrogating someone about a snack they can't remember."
 
 **Step 5 — the most important ten seconds in the video:**
 > "Watch the sidebar. 790 to 895 — 105 calories, exactly one roti. The roti row goes two to three,
@@ -239,126 +244,210 @@ python -m calorai.cli --user someone_else
 
 ---
 
-## 5:00 — SURFACE 3: the board · *architecture, memory, multimodal*
+## 5:00 — SURFACE 3: the board · *architecture, memory, ask-vs-log, multimodal*
 
-Switch to the board tab. Pan the **graph**. You are talking over a diagram now, not reading code —
-drop into the editor only for the two files named below.
+Switch to the board. Pan the **graph**. You're talking over a diagram now, not reading code. Drop
+into the editor only for the two files named below.
 
-> "It's a LangGraph tool-calling loop. The model sees all six tool schemas and decides — genuinely
-> an agent, not a classifier dispatching to handlers. A router would be faster, but would only
-> handle the phrasings I thought to write rules for."
+> "So this is a LangGraph tool-calling loop. The model sees all six tool schemas, and it decides.
+> That matters to me. It's genuinely an agent, not a classifier handing off to handlers. A router
+> would be faster. But a router only handles the phrasings I thought to write rules for."
 
-> "Ingest does the cheap deterministic work first. The two places the model is deliberately absent
-> are the fast path and the memory write — and the memory write happens after you already have your
-> reply, which is why memory costs nothing in p50."
+> "Ingest does the cheap deterministic work first. And there are two places I keep the model out on
+> purpose. One is the fast path. The other is the memory write. The memory write runs after you
+> already have your reply, so remembering things costs nothing in p50."
 
 **Editor · `src/calorai/tools.py`** — the one file to dwell on:
-> "`correct_meal` is a *separate tool* from `log_meal`. A single 'record what they said' tool lets
-> the model answer 'actually that was 3 rotis' by logging three more, and no prompt wording reliably
-> stops that. Split, `correct_meal` has no INSERT path and `log_meal` has no UPDATE path — double
-> counting becomes structurally impossible. That's what you were watching in the sidebar earlier."
+> "Here's the decision I'd defend hardest. `correct_meal` is a separate tool from `log_meal`."
+
+> "If you give a model one tool that means 'record what they said', then 'actually that was 3 rotis'
+> gets answered by logging three more rotis. And no prompt wording reliably stops that. I tried."
+
+> "So I split them. `correct_meal` has no INSERT path. `log_meal` has no UPDATE path. Double
+> counting isn't unlikely now, it's impossible. That's what you were watching in the sidebar
+> earlier."
 
 **Editor · `src/calorai/db.py`:**
-> "And there's no stored total anywhere. Totals are a SUM at query time. There's no counter to
-> drift."
+> "Same idea here. There's no stored total anywhere in the schema. Totals are a SUM at query time.
+> There's no counter, so there's nothing to drift."
 
 **Back to the board — memory:**
-> "Three stores, and none of them is conversation history. Writes happen on a background thread
-> after the reply goes out, and extraction is three tiers — a regex gate most messages exit having
-> cost nothing, then rules, then the model. 'Had 2 rotis' is an event, not a fact about me, and it
-> never reaches the model."
+> "Three stores. And none of them is conversation history, which I think is the important part."
 
-> "Retrieval is: all the facts, every turn. That sounds naive until you notice facts are *keyed*, so
-> a contradiction supersedes rather than appends, and the store stays at a couple of dozen
-> one-liners forever. The honest answer to 'how do you retrieve without bloating the prompt' is to
-> make retrieval unnecessary. That's also why there's no RAG — it solves corpus-bigger-than-context,
-> and this can't have that problem. I measured it: memory is about 6% of tokens; tool schemas were
-> 71%."
+> "Writes happen on a background thread after the reply goes out. Extraction is three tiers. Most
+> messages hit a regex gate and exit having cost nothing. Then rules. Then the model. 'Had 2 rotis'
+> is an event, not a fact about me, so it never reaches the model at all."
 
-**Say this — a deliberate disagreement, and they asked for opinions:**
-> "The brief groups 'same as yesterday' with 'my usual' as memory problems. I don't think they're
-> the same thing. One's a date predicate with an exact answer; the other is learned shorthand. I
-> built them differently."
+**Say the word "weeks" — it's in the job description:**
+> "Retrieval is: all the facts, every turn. That sounds naive. Here's why it holds up over weeks.
+> Facts are *keyed*. So if I say I'm vegetarian and later say I eat fish, that supersedes, it
+> doesn't append. The store stays at a couple of dozen one-liners no matter how long you use it."
+
+> "So the honest answer to 'how do you retrieve without bloating the prompt' is that I made
+> retrieval unnecessary. That's also why there's no RAG here. RAG solves corpus-bigger-than-context,
+> and this can't have that problem."
+
+**The disagreement — say it, they asked for opinions:**
+> "One thing I'd push back on. The brief groups 'same as yesterday' with 'my usual' as memory
+> problems. I don't think those are the same thing. One is a date predicate with an exact answer.
+> The other is learned shorthand. So I built them differently."
+
+**Ask-versus-log — this is a line straight out of the job description:**
+> "And the thing I spent longest getting right isn't in any one file. It's knowing when to ask and
+> when to just log it."
+
+> "It's a written policy, not vibes. Log without asking when the items resolve. Ask exactly one
+> question, batched, when something's unrecognisable or the swing is more than forty percent. And
+> never ask about grams, or oil, or brands. Assume, and say what you assumed."
+
+> "That's what 'skipped lunch but grazed all afternoon' was doing earlier. It logged an estimate and
+> asked me nothing. Logging something imprecise beats interrogating someone. The confidence lives on
+> the row, so the total hedges instead of the conversation."
 
 **Multimodal:**
-> "I read the food-image estimation literature before writing the vision prompt. The finding that
-> mattered: portion is the error, not identification. Models name biryani fine — they can't tell 200
-> grams from 500, because a photo carries no absolute scale."
+> "For the photo path, I read the food-image estimation literature before I wrote the prompt. The
+> finding that mattered: portion is the error, not identification. Models name biryani fine. They
+> cannot tell two hundred grams from five hundred, because a photo carries no absolute scale."
 
-> "So confidence is two fields, not one, and the thresholds are deliberately asymmetric: low
-> identification asks, low portion logs anyway and says what it assumed. Gating both the same way
-> would make it ask about portions on nearly every photo. And diet facts go into the *vision* prompt
-> too — if it knows I'm vegetarian, white cubes come back as paneer rather than chicken."
+> "So confidence is two fields, not one. And the thresholds are deliberately asymmetric. Low
+> identification asks. Low portion logs anyway and tells you what it assumed. If I gated both the
+> same way it would ask about portions on nearly every photo, and that's the form-filling I was
+> trying to get away from."
 
-**Cut first:** the token percentages, and the vision-priors point. Keep the disagreement — it is
-worth more than either.
+**Supabase — twenty seconds, and say it as a choice, not an apology:**
+> "One last thing on the data layer, since you're on Supabase. This runs on SQLite, and that was
+> deliberate. For an eight-hour build where the first red flag on your list is 'doesn't run from a
+> clean clone', a database that needs no service and no keys is the right tool. My tests and my evals
+> pass on a fresh clone with nothing installed. I wasn't going to trade that."
+
+> "And the idea is the same either way. All the SQL lives in three files, nothing above them writes
+> any, so the port is placeholders, serial ids, upserts. The thing that keeps totals correct is a
+> schema decision, not a SQLite one, so it survives the move unchanged."
+
+> "The one part I'd change rather than port is user scoping. Right now it's enforced by construction
+> — the tools close over the user id, so no code path can take one from the model. On Supabase that
+> should be row-level security as well, so the database enforces it even when the application is
+> wrong."
+
+**Cut first:** the RAG sentence and the multimodal asymmetry detail. **Do not cut** the disagreement,
+the ask-versus-log policy, or Supabase — those are the three the job description names directly.
 
 ---
 
-## 7:45 — Tests, evals, latency · *Terminal B, then the board*
+## 7:30 — Tests, evals, latency · *Terminal B, then the board*
 
 ```bash
 pytest tests/ -q
 python evals/run_evals.py
 ```
 
-> "178 tests and 21 eval cases, and both run on a clean clone with no API keys, because there's a
-> deterministic offline backend. Eleven of those come straight from your test set — you can see them
-> named as they pass."
+> "182 tests and 21 eval cases. Both run on a clean clone with no API keys, because there's a
+> deterministic offline backend. Eleven of those cases come straight from your test set. You can
+> watch them go past by name."
 
-> "Each case scores four axes, and the load-bearing one is the live row count. A correction done
-> with the wrong tool still produces plausible-looking calories. Only the row count catches it."
+> "Each case scores four axes. The load-bearing one is the live row count. Because a correction done
+> with the wrong tool still produces perfectly plausible-looking calories. Only the row count catches
+> it."
+
+**Then the drift check — this is the job description's own sentence, so land it:**
+> "But pass-fail only tells you *does it work*. It doesn't tell you *did that change help*, which is
+> the question you actually have after rewriting a prompt."
+
+> "So there's a committed baseline with per-case scores. Every run compares against it and reports
+> movement in both directions. If I fix the phrasing on corrections and quietly break the one about
+> fractions, it says so, by name. Prompts regress sideways, and a green total will hide that from
+> you."
 
 **Board → latency:**
-> "Text p50 766 milliseconds, p95 1257 — and you saw in `/debug` that the agent's own overhead is
-> sub-millisecond, so that is all model round trip. The image path is 5.9 seconds. The biggest
-> single win was `reasoning_effort=low`: gpt-oss is a reasoning model, and two-tool turns were
-> taking twelve to twenty seconds."
+> "Text p50 is 766 milliseconds, p95 1257. And you saw in `/debug` that the agent's own overhead is
+> under a millisecond. So that's basically all model round-trip, which is where it should be."
+
+> "The image path is 5.9 seconds. The biggest single win anywhere was `reasoning_effort=low` —
+> gpt-oss is a reasoning model, and two-tool turns were taking twelve to twenty seconds before I
+> capped it."
 
 **The one worth telling as a story:**
-> "The image p95 was 13.7 seconds and I assumed that was inference. It wasn't. I had a second vision
-> provider configured as failover and its daily quota was gone — so every photo was paying for a
-> dead provider's timeout before the working one was ever called. Deleting the fallback took p95 to
-> 6.8. A fallback to something that's out of quota is worse than no fallback, and you can't reason
-> your way to that. You have to look."
+> "And here's the one I got wrong. Image p95 was 13.7 seconds, and I assumed that was inference. It
+> wasn't."
 
-> "And the honest part: the binding constraint isn't latency, it's tokens per day. That's why the
-> benchmark paces requests and reports a throttled count — firing thirty turns back to back measures
-> the rate limiter, not the agent."
+> "I had a second vision provider set up as failover, and its daily quota was already gone. So every
+> single photo was paying for a dead provider to time out before the working one got called.
+> Deleting the fallback took p95 from 13.7 to 6.8 seconds."
 
-**Cut first:** the Gemini thinking-model story (429 ms vs 8.1 s) — it's on the board if they read it.
+> "A fallback to something that's out of quota is worse than no fallback at all. And you can't reason
+> your way to that one. You have to go and look."
+
+> "The honest headline, though: the binding constraint isn't latency. It's tokens per day. That's why
+> the benchmark paces requests and reports a throttled count. Firing thirty turns back to back
+> measures the rate limiter, not the agent."
+
+**Cut first:** the Gemini thinking-model story. It's on the board if they want it.
 
 ---
 
-## 8:45 — The bug, and close · *the board's bugs section*
+## 8:40 — The bug, and close · *the board's bugs section*
 
-Do not rush this. It is the strongest minute in the video.
+Slow down here. Don't rush it. This is the strongest minute in the video, and it's the one they'll
+remember.
 
-> "The mock proves plumbing, not model behaviour. Running real models found things it structurally
-> couldn't — the model parroting an example out of my own system prompt, a portion getting halved
-> twice because prompt and code were both being safe. But the one I found last is the one I'd lead
-> with."
+> "Last thing. The mock proves the plumbing. It proves nothing about model behaviour. Running real
+> models found things it structurally couldn't — the model parroting an example out of my own system
+> prompt back at me, a portion getting halved twice because the prompt and the code were both being
+> careful."
+
+> "But the one I found last is the one I'd lead with."
 
 > "My failover provider was pointed at a model I'd verified with a single call. When I finally ran
-> the whole conversation through it, it told me 'roughly 170 for assorted snacks' — and it had made
-> no tool call at all. It was confirming meals it never wrote. That's the worst failure this product
-> can have, because the user has no reason to check."
+> the whole conversation through it, it told me 'roughly 170 for assorted snacks'. And it had made no
+> tool call at all. It was confirming meals it never wrote."
 
-> "Notice what couldn't catch it. The mock can't, because the mock always calls the tool. A unit
-> test can't, because the tool is correct. The latency benchmark can't — it passed, and that model
-> was actually *faster* than the one I replaced it with, which is exactly how it became the default."
+*(beat)*
+
+> "That's the worst failure this product can have. Because the user has no reason to check."
+
+> "Now notice what couldn't have caught it. The mock can't — the mock always calls the tool. A unit
+> test can't — the tool is correct. And the latency benchmark can't, because it passed. That model
+> was actually *faster* than the one I replaced it with. That's exactly how it became the default."
 
 > "What caught it is a script that walks the whole conversation and prints the database after every
-> turn, so a reply that sounds right sits directly above a row count that didn't move. The
-> generalisation I'd defend: a health check has to spend what a real request spends. I got that
-> lesson twice from opposite directions — a five-token 'say OK' probe returning 200 while every real
-> turn was failing on the daily token cap, and a single-call probe passing on a model that couldn't
-> hold a conversation."
+> turn. So a reply that sounds right sits directly above a row count that didn't move."
+
+> "The generalisation I'd defend from that: a health check has to spend what a real request spends.
+> And I got that same lesson twice, from opposite directions. A five-token 'say OK' probe coming back
+> 200 while every real turn was failing on the daily token cap. And a single-call probe passing on a
+> model that couldn't hold a conversation."
 
 **Close:**
-> "With more time: the image path under three seconds, and prompt caching — which on a
-> token-limited tier converts directly into more usable turns. Everything I've claimed is in the
-> README, and the benchmark runs are committed, including the one I can't retake, and why."
+> "With more time: the image path under three seconds, and prompt caching, which on a token-limited
+> tier turns directly into more usable turns per day."
+
+> "Everything I've claimed here is in the README, and the benchmark runs are committed — including
+> the one I couldn't retake, and why. Thanks for reading it."
+
+---
+
+## Am I saying enough to get the job?
+
+The posting names four things and a stack. Every one has a line in the script now — this is where to
+check you actually said them, because these are the sentences they are listening for.
+
+| They asked for | Where you say it | The line |
+|---|---|---|
+| **Tool calling** | 5:00, `tools.py` | `correct_meal` and `log_meal` split so double counting is *impossible*, not unlikely |
+| **Memory across weeks** | 5:00, memory | facts are **keyed**, so contradictions supersede — the store stays two dozen one-liners no matter how long you use it |
+| **Knowing when to ask vs just log** | **3:00 (step 3)** and 5:00 | it logged an estimate and asked nothing; the policy is written down, not vibes |
+| **Evals that say whether it got better** | 7:30 | the committed baseline reports movement in both directions, by case name |
+| **Python / LangGraph / Supabase** | 0:35 throughout, 5:00 | SQLite was the right tool for eight hours and a clean clone; scoping belongs in RLS on Supabase |
+
+Three of those five had no line in an earlier draft. If you are cutting for time, cut the RAG
+sentence, the multimodal asymmetry detail and the Gemini story — **never** these five.
+
+Two more they will be listening for that aren't in the posting:
+
+- **An opinion.** The brief says they would rather hire someone with opinions. The disagreement about
+  "same as yesterday" versus "my usual" is the one — say it plainly, don't soften it.
+- **Something you couldn't fix.** The tokens-per-day ceiling, and the failover p95 you still owe.
+  Naming a limit is what makes the rest of the numbers believable.
 
 ---
 
