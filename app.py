@@ -27,7 +27,7 @@ from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
 from calorai.graph import build_graph, stream_turn  # noqa: E402
 from calorai.llm import active_backends, tracing_status  # noqa: E402
-from calorai.memory import extractor, render  # noqa: E402
+from calorai.memory import extractor, render, store  # noqa: E402
 from calorai.schemas import FoodItem  # noqa: E402
 
 st.set_page_config(page_title="CalorAI", page_icon="🍛", layout="wide")
@@ -138,6 +138,23 @@ def main() -> None:
             repo.clear_day(conn, user)
             st.session_state.pop(f"history_{user}", None)
             st.rerun()
+
+        # The counterpart to the button above, and separate from it on purpose:
+        # meals are what happened, facts and aliases are what the agent
+        # remembers, and they are different stores. Wiping one while the other
+        # survives is the shortest demonstration that memory here is not just
+        # the conversation replayed.
+        if st.button("clear what it remembers", use_container_width=True):
+            dropped = store.forget_everything(conn, user)
+            st.session_state[f"forgot_{user}"] = dropped
+            st.rerun()
+
+        forgot = st.session_state.pop(f"forgot_{user}", None)
+        if forgot:
+            st.caption(
+                f"forgot {forgot['facts']} fact(s) and {forgot['aliases']} alias(es) "
+                "— meals kept"
+            )
 
     history_key = f"history_{user}"
     history = st.session_state.setdefault(history_key, [])

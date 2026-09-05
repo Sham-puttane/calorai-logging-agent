@@ -47,6 +47,32 @@ on camera — it is exactly how the lying failover model was found.
 Then start Streamlit, set the user field to `take1`, press **Enter** to apply. Streamlit loads code
 once at boot, so **restart it after any change**.
 
+## Resetting between takes
+
+You will run the sequence more than once. Pick the smallest reset that does the job:
+
+| Want | Do | Keeps |
+|---|---|---|
+| A completely fresh person | type a new name in the sidebar **user** field | everything, under the old name |
+| Wipe only what it remembers | sidebar **clear what it remembers**, or `/forget` in the CLI | the meals — which is the point: two stores, wipe one |
+| Wipe only today's food | sidebar **clear this user's day** | the memory |
+| Start the whole database over | `del calorai.db` | nothing, for every user |
+
+**Changing the user name is the fastest and safest**, and it doubles as the isolation demo. Reach for
+`del calorai.db` only in pre-flight.
+
+## What the seed button does
+
+**seed yesterday's meals** inserts 3 idli and 1 katori sambar dated *yesterday*, nothing else. It
+exists because `same as yesterday` on a brand-new user correctly answers "nothing logged", which
+reads as a bug on camera.
+
+It deliberately does **not** plant a `my usual`. An alias the user never taught is a memory they did
+not create, and showing it as though the agent learned something would be a lie — teaching it live
+with `remember this as my usual` is the more convincing demonstration anyway. Worth one sentence out
+loud if you press it on camera: *"that's seeding yesterday's food so there's a yesterday to refer
+to — it doesn't seed any memory."*
+
 ## Rehearse the whole thing once, timed
 
 Run Part 2 end to end with a stopwatch and nothing recording. You are looking for two numbers: total

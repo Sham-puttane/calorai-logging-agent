@@ -44,9 +44,12 @@ from calorai import repository as repo  # noqa: E402
 from calorai.db import connect  # noqa: E402
 from calorai.graph import build_graph, run_turn, stream_turn  # noqa: E402
 from calorai.llm import active_backends, tracing_status  # noqa: E402
-from calorai.memory import extractor, render  # noqa: E402
+from calorai.memory import extractor, render, store  # noqa: E402
 
 console = Console()
+
+#: In-flight background memory writes, joined on exit by _flush_memory_writes.
+_PENDING_WRITES: list[threading.Thread] = []
 
 HELP = """\
 [bold]commands[/bold]
@@ -54,6 +57,7 @@ HELP = """\
   /totals              today's calories and macros
   /memory              what the agent remembers about you
   /history             recent meals
+  /forget              wipe remembered facts and aliases (meals kept)
   /debug               per-stage timings for the last turn
   /help  /quit"""
 
@@ -83,7 +87,29 @@ def _remember_later(conn, user_id: str, text: str) -> None:
         except Exception:
             pass
 
-    threading.Thread(target=work, daemon=True).start()
+    thread = threading.Thread(target=work, daemon=True)
+    _PENDING_WRITES.append(thread)
+    thread.start()
+
+
+def _flush_memory_writes(timeout: float = 3.0) -> None:
+    """Let in-flight memory writes finish before the process exits.
+
+    These threads are daemons so a hung model call can never wedge the REPL --
+    but a daemon dies with the process, so teaching the agent something and
+    quitting immediately lost the write. Observed exactly that: "remember this
+    as my usual dinner" followed straight by /quit stored the facts and dropped
+    the alias, because the slower of the two writes was still in flight.
+
+    "It forgot the last thing I told it" is a memory bug to anyone watching,
+    whatever the cause. Bounded so a wedged write delays exit by 3s at most.
+    """
+    deadline = time.monotonic() + timeout
+    for thread in _PENDING_WRITES:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        thread.join(remaining)
 
 
 def main() -> None:
@@ -123,6 +149,7 @@ def main() -> None:
         try:
             line = console.input("[bold cyan]you ›[/bold cyan] ").strip()
         except (EOFError, KeyboardInterrupt):
+            _flush_memory_writes()
             console.print("\n[dim]bye[/dim]")
             return
         if not line:
@@ -130,6 +157,7 @@ def main() -> None:
 
         low = line.lower()
         if low in {"/quit", "/exit", "quit", "exit"}:
+            _flush_memory_writes()
             console.print("[dim]bye[/dim]")
             return
         if low == "/help":
@@ -141,6 +169,13 @@ def main() -> None:
         if low == "/memory":
             block = render.render_memory_block(conn, args.user)
             console.print(block or "[dim]nothing remembered yet[/dim]")
+            continue
+        if low == "/forget":
+            dropped = store.forget_everything(conn, args.user)
+            console.print(
+                f"[dim]forgot {dropped['facts']} fact(s) and "
+                f"{dropped['aliases']} alias(es) -- meals kept, /history still works[/dim]"
+            )
             continue
         if low == "/history":
             for meal in repo.find_meals(conn, args.user, limit=10)["meals"]:

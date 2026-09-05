@@ -84,7 +84,13 @@ streamlit run app.py                        # chat UI  (pip install -e ".[ui]")
 ```
 
 In the CLI: `img:images/plate.jpg optional caption` sends a photo. `/totals`, `/memory`,
-`/history`, `/debug` (per-stage timings for the last turn), `/help`, `/quit`.
+`/history`, `/forget` (wipe remembered facts and aliases, keeping the meals), `/debug` (per-stage
+timings for the last turn), `/help`, `/quit`.
+
+`/forget` and the sidebar's **clear what it remembers** are deliberately separate from clearing the
+day: meals are what happened, facts and aliases are what the agent *remembers*, and they are
+different stores. Wiping one while the other survives is the shortest demonstration that memory here
+is not the conversation replayed back.
 
 A photo can carry a caption in both interfaces — `img:plate.jpg half of this was my brother's` in
 the CLI, and in the UI an upload is *staged* with a preview so you can type context before sending.

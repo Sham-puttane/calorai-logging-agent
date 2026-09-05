@@ -113,6 +113,34 @@ def forget_fact(conn: sqlite3.Connection, user_id: str, key: str) -> bool:
     return cur.rowcount > 0
 
 
+def forget_everything(conn: sqlite3.Connection, user_id: str) -> dict[str, int]:
+    """Drop every remembered fact and every learned alias for one user.
+
+    The counterpart to repository.clear_day, and it exists because the pair was
+    asymmetric: the day could be cleared from the UI but the memory could not,
+    so re-testing "what does it know about me from nothing" meant deleting the
+    database and losing every other user with it.
+
+    Meals are deliberately untouched. Facts and aliases are what the agent
+    *remembers*; meals are what happened, and the two are separate stores on
+    purpose -- being able to wipe one and keep the other is the clearest way to
+    show that.
+
+    Facts are superseded rather than deleted, matching forget_fact, so the
+    audit trail survives. Aliases are deleted outright: they carry no history
+    worth keeping and a soft-deleted alias would still need filtering out of
+    every lookup.
+    """
+    facts = conn.execute(
+        "UPDATE profile_facts SET superseded_by = -1"
+        " WHERE user_id = ? AND superseded_by IS NULL",
+        (user_id,),
+    ).rowcount
+    aliases = conn.execute("DELETE FROM aliases WHERE user_id = ?", (user_id,)).rowcount
+    conn.commit()
+    return {"facts": facts, "aliases": aliases}
+
+
 # ---------------------------------------------------------------------------
 # aliases
 # ---------------------------------------------------------------------------
@@ -380,6 +408,19 @@ def learn_alias_from_recent_meal(
             (user_id, last["local_date"], slot),
         ).fetchall()
     else:
+        rows = conn.execute(
+            "SELECT name, qty, unit FROM meal_items"
+            " WHERE meal_id = ? AND deleted_at IS NULL",
+            (last["meal_id"],),
+        ).fetchall()
+
+    # A named slot that matches nothing means the person disagreed with the
+    # auto-slotting, not that there is nothing to remember. "remember this as
+    # my usual dinner" said at 4pm searched for dinner rows, found none because
+    # the food had been filed as a snack, and stored nothing at all -- silently,
+    # which is the worst version. Fall back to the meal they were plainly
+    # pointing at, and file it under the name they gave it.
+    if not rows and named:
         rows = conn.execute(
             "SELECT name, qty, unit FROM meal_items"
             " WHERE meal_id = ? AND deleted_at IS NULL",

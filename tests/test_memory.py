@@ -186,3 +186,63 @@ def test_vision_priors_carry_only_plate_relevant_facts(conn):
     priors = render.render_vision_priors(conn, USER)
     assert "vegetarian" in priors
     assert "140" not in priors
+
+
+def test_forgetting_everything_keeps_the_meals(conn):
+    """The two stores are separate, and clearing one must not touch the other.
+
+    This is the assertion behind the sidebar's two buttons. Meals are what
+    happened; facts and aliases are what the agent remembers. Wiping memory
+    while the day's log survives is the shortest proof that memory here is not
+    the conversation replayed back.
+    """
+    store.put_fact(conn, USER, "diet", "vegetarian")
+    store.put_fact(conn, USER, "protein_target_g", "140")
+    store.put_alias(conn, USER, "my usual", [{"name": "oats", "qty": 1, "unit": "katori"}])
+    repo.log_meal(conn, USER, [FoodItem(name="roti", qty=2, unit="piece")], slot="dinner")
+
+    before = repo.daily_totals(conn, USER)["kcal"]
+    assert before > 0
+    assert render.render_memory_block(conn, USER)
+
+    dropped = store.forget_everything(conn, USER)
+
+    assert dropped == {"facts": 2, "aliases": 1}
+    assert render.render_memory_block(conn, USER) == ""
+    assert store.resolve_alias(conn, USER, "my usual") is None
+    assert repo.daily_totals(conn, USER)["kcal"] == before
+
+
+def test_forgetting_is_scoped_to_one_user(conn):
+    store.put_fact(conn, USER, "diet", "vegetarian")
+    store.put_fact(conn, "someone_else", "diet", "vegan")
+
+    store.forget_everything(conn, USER)
+
+    assert render.render_memory_block(conn, USER) == ""
+    assert "vegan" in render.render_memory_block(conn, "someone_else")
+
+
+def test_forgetting_nothing_is_not_an_error(conn):
+    assert store.forget_everything(conn, USER) == {"facts": 0, "aliases": 0}
+
+
+def test_naming_a_slot_that_holds_nothing_still_remembers_the_meal(conn):
+    """"remember this as my usual dinner" said over food filed as a snack.
+
+    The named slot wins over the inferred one, which is right -- the person is
+    telling you what to call it. But when that slot holds no rows, searching it
+    and giving up stored nothing at all, silently, and the failure depended on
+    what time of day the message was sent. They are plainly pointing at the
+    meal they just logged.
+    """
+    repo.log_meal(conn, USER, [FoodItem(name="roti", qty=2, unit="piece")], slot="snack")
+
+    learned = store.learn_alias_from_recent_meal(
+        conn, USER, "my usual", text="remember this as my usual dinner"
+    )
+
+    assert learned is not None, "named a slot with no rows and lost the meal"
+    assert [i["name"] for i in learned["items"]] == ["roti"]
+    assert learned["slot"] == "dinner", "should file it under the name they gave it"
+    assert store.resolve_alias(conn, USER, "my usual", slot="dinner") is not None
