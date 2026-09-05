@@ -14,3 +14,11 @@ dist/
 demo.db
 *.db-shm
 *.db-wal
+
+# Personal prep, not deliverables: the recording script, the rotation
+# checklist (which names leaked key prefixes) and a draft email. Kept on
+# disk, out of the public repo.
+docs/SUBMISSION.md
+docs/progress_email.md
+docs/RUNBOOK.md
+docs/video_script.md
